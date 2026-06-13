@@ -207,6 +207,59 @@ def test_gemini_thought_signature_translation():
     assert tool_msg["tool_call_id"] == "call_gemini_123"
     assert tool_msg["content"] == "Sunny, 20C"
 
+def test_mistral_sanitization():
+    # Simulate an Anthropic request with cache_control and list-based system prompt
+    anth_req = {
+        "model": "mistral-large-latest",
+        "system": [{"type": "text", "text": "System prompt", "cache_control": {"type": "ephemeral"}}],
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": f"call_123{ts.SIGNATURE_SEPARATOR}SIG_STUFF",
+                        "name": "tool",
+                        "input": {}
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Hello", "cache_control": {"type": "ephemeral"}}
+                ]
+            }
+        ]
+    }
+    
+    # 1. Translate to OpenAI
+    openai_req = ts.anthropic_to_openai_request(anth_req, "mistral-large-latest")
+    
+    # 2. Sanitize for Mistral (is_gemini=False)
+    sanitized_mistral = ts.sanitize_openai_payload(openai_req, is_gemini=False)
+    
+    # System prompt should be a string and clean
+    assert sanitized_mistral["messages"][0]["role"] == "system"
+    assert sanitized_mistral["messages"][0]["content"] == "System prompt"
+    
+    # Assistant message should have extra_content STRIPPED
+    assert sanitized_mistral["messages"][1]["role"] == "assistant"
+    assert "extra_content" not in sanitized_mistral["messages"][1]["tool_calls"][0]
+    
+    # User message should be clean
+    assert sanitized_mistral["messages"][2]["role"] == "user"
+    assert "cache_control" not in sanitized_mistral["messages"][2]
+
+    # 3. Sanitize for Gemini (is_gemini=True)
+    openai_req_gemini = ts.anthropic_to_openai_request(anth_req, "gemini-model")
+    sanitized_gemini = ts.sanitize_openai_payload(openai_req_gemini, is_gemini=True)
+    
+    # Assistant message should have extra_content PRESERVED
+    assert sanitized_gemini["messages"][1]["role"] == "assistant"
+    assert "extra_content" in sanitized_gemini["messages"][1]["tool_calls"][0]
+    assert sanitized_gemini["messages"][1]["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "SIG_STUFF"
+
 # --- Unit Tests for DB Limits and Logging ---
 
 def test_database_logging_limits(tmp_path):

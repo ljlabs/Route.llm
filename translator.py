@@ -4,15 +4,80 @@ import time
 
 SIGNATURE_SEPARATOR = "____ts____"
 
+def sanitize_openai_payload(payload: dict, is_gemini: bool = False) -> dict:
+    """
+    Defensively strips Anthropic-specific or non-standard fields (like cache_control)
+    and ensures content blocks are in a format strict APIs (like Mistral) expect.
+    """
+    if "messages" not in payload:
+        return payload
+
+    for message in payload["messages"]:
+        content = message.get("content")
+        
+        # 1. Flatten list content to string if it's purely text to avoid strict API errors
+        if isinstance(content, list):
+            text_parts = []
+            non_text_parts = []
+            
+            for part in content:
+                if isinstance(part, dict):
+                    # Strip Anthropic-specific fields
+                    part.pop("cache_control", None)
+                    
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    else:
+                        non_text_parts.append(part)
+                elif isinstance(part, str):
+                    text_parts.append(part)
+            
+            if text_parts and not non_text_parts:
+                message["content"] = "".join(text_parts)
+            elif text_parts or non_text_parts:
+                # Keep as list but ensure text part is clean
+                new_content = []
+                if text_parts:
+                    new_content.append({"type": "text", "text": "".join(text_parts)})
+                new_content.extend(non_text_parts)
+                message["content"] = new_content
+        
+        # 2. Strip any other top-level non-standard fields from message if they exist
+        if isinstance(message, dict):
+            message.pop("cache_control", None)
+            
+            # 3. Strip Gemini-specific extra_content from tool_calls if NOT a Gemini provider
+            # Strict APIs like Mistral reject unknown fields in tool_calls
+            if not is_gemini and "tool_calls" in message:
+                tool_calls = message["tool_calls"]
+                if isinstance(tool_calls, list):
+                    for call in tool_calls:
+                        if isinstance(call, dict):
+                            call.pop("extra_content", None)
+
+    return payload
+
 def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
     """Translates Anthropic /v1/messages request to OpenAI /v1/chat/completions request (including tools)"""
     messages = []
     
     # Add system prompt if present
     if "system" in anth_req and anth_req["system"]:
+        system_content = anth_req["system"]
+        # Defensive: Flatten system prompt to string if it's a list (Mistral/OpenAI strictness)
+        if isinstance(system_content, list):
+            text_parts = []
+            for part in system_content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                elif isinstance(part, str):
+                    text_parts.append(part)
+            system_content = "".join(text_parts)
+            
         messages.append({
             "role": "system",
-            "content": anth_req["system"]
+            "content": system_content
         })
         
     for msg in anth_req.get("messages", []):

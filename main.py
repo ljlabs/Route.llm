@@ -125,9 +125,10 @@ async def test_chat(request: Request):
     url = active_prov["endpoint_url"]
     
     try:
-        if active_prov["api_type"] in ["openai", "gemini"]:
+        if active_prov["api_type"] in ["openai", "gemini", "mistral"]:
             headers = {"Authorization": f"Bearer {active_prov['api_key']}"}
-            payload = test_req
+            is_gemini = active_prov["api_type"] == "gemini"
+            payload = ts.sanitize_openai_payload(test_req, is_gemini=is_gemini)
         else: # anthropic
             payload = ts.openai_to_anthropic_request(test_req, active_prov["model_name"])
             headers = {
@@ -205,7 +206,7 @@ async def test_chat(request: Request):
         
         # Process success response
         try:
-            if active_prov["api_type"] in ["openai", "gemini"]:
+            if active_prov["api_type"] in ["openai", "gemini", "mistral"]:
                 content = resp_json["choices"][0]["message"]["content"]
             else:
                 openai_res = ts.anthropic_to_openai_response(resp_json)
@@ -257,14 +258,15 @@ async def stream_generator(response, active_prov, is_incoming_anthropic, is_back
     next_anth_block_idx = 1 # Index 0 is text content block
     
     is_gemini = active_prov.get("api_type") == "gemini"
+    is_mistral = active_prov.get("api_type") == "mistral"
     
     try:
         async for line in response.aiter_lines():
             if not line:
                 continue
                 
-            # Translation: Incoming Anthropic, Backend OpenAI (e.g. OpenRouter, Gemini)
-            if is_incoming_anthropic and (is_backend_openai or is_gemini):
+            # Translation: Incoming Anthropic, Backend OpenAI (e.g. OpenRouter, Gemini, Mistral)
+            if is_incoming_anthropic and (is_backend_openai or is_gemini or is_mistral):
                 if line.startswith("data:"):
                     data_content = line.replace("data:", "").strip()
                     if data_content == "[DONE]":
@@ -522,12 +524,14 @@ async def proxy_anthropic_messages(request: Request):
     req_body_str = json.dumps(req_body, indent=2)
     stream_requested = req_body.get("stream", False)
     
-    is_backend_openai = active_prov["api_type"] in ["openai", "gemini"]
+    is_backend_openai = active_prov["api_type"] in ["openai", "gemini", "mistral"]
     url = active_prov["endpoint_url"]
     
     try:
         if is_backend_openai:
             openai_req = ts.anthropic_to_openai_request(req_body, active_prov["model_name"])
+            is_gemini = active_prov["api_type"] == "gemini"
+            openai_req = ts.sanitize_openai_payload(openai_req, is_gemini=is_gemini)
             headers = {"Authorization": f"Bearer {active_prov['api_key']}"}
             
             print(f"\n--- PROXYING ANTHROPIC TO OPENAI [{active_prov['name']}] ---")
@@ -666,7 +670,7 @@ async def proxy_openai_chat_completions(request: Request):
     req_body_str = json.dumps(req_body, indent=2)
     stream_requested = req_body.get("stream", False)
     
-    is_backend_openai = active_prov["api_type"] in ["openai", "gemini"]
+    is_backend_openai = active_prov["api_type"] in ["openai", "gemini", "mistral"]
     url = active_prov["endpoint_url"]
     
     try:
@@ -732,6 +736,8 @@ async def proxy_openai_chat_completions(request: Request):
                     raise HTTPException(status_code=500, detail=err_msg)
         else:
             req_body["model"] = active_prov["model_name"]
+            is_gemini = active_prov["api_type"] == "gemini"
+            req_body = ts.sanitize_openai_payload(req_body, is_gemini=is_gemini)
             headers = {"Authorization": f"Bearer {active_prov['api_key']}"}
             
             print(f"\n--- PROXYING OPENAI TO OPENAI [{active_prov['name']}] ---")
