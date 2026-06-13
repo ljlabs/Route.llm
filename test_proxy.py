@@ -260,6 +260,37 @@ def test_mistral_sanitization():
     assert "extra_content" in sanitized_gemini["messages"][1]["tool_calls"][0]
     assert sanitized_gemini["messages"][1]["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "SIG_STUFF"
 
+@pytest.mark.anyio
+async def test_rate_limiter_logic():
+    # Import from main. Use a local import to avoid issues if main has side effects
+    from main import GlobalRateLimiter
+    import asyncio
+    
+    # Test 2 TPS (0.5s interval)
+    limiter = GlobalRateLimiter(2.0)
+    
+    start = time.time()
+    # First call - should be instant
+    await limiter.wait()
+    # Second call - should wait ~0.5s
+    await limiter.wait()
+    # Third call - should wait ~0.5s (total ~1.0s)
+    await limiter.wait()
+    end = time.time()
+    
+    duration = end - start
+    # We expect roughly 1.0s total wait for 3 calls at 2 TPS
+    assert 0.9 <= duration <= 1.2
+    
+    # Test disabled (0 TPS)
+    limiter.set_rate(0)
+    start = time.time()
+    for _ in range(5):
+        await limiter.wait()
+    end = time.time()
+    # Should be near instant
+    assert (end - start) < 0.1
+
 # --- Unit Tests for DB Limits and Logging ---
 
 def test_database_logging_limits(tmp_path):
