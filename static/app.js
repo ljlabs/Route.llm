@@ -104,6 +104,7 @@ function renderProviders(providers) {
             <div class="card-actions">
                 ${!p.is_active ? `<button class="btn btn-primary" onclick="setActiveProvider(${p.id})">Set Active</button>` : ''}
                 <button class="btn btn-secondary" onclick="openProviderModal(${JSON.stringify(p).replace(/"/g, '&quot;')})">Edit</button>
+                <button class="btn btn-secondary" onclick="duplicateProvider(${JSON.stringify(p).replace(/"/g, '&quot;')})">Duplicate</button>
                 <button class="btn btn-danger" onclick="deleteProvider(${p.id})">Delete</button>
             </div>
         `;
@@ -146,7 +147,7 @@ function openProviderModal(provider = null) {
     keyInput.type = "password";
     document.getElementById("toggle-key-visibility").innerText = "👁";
     
-    if (provider) {
+    if (provider && provider.id) {
         title.innerText = "Edit Provider";
         document.getElementById("provider-id").value = provider.id;
         document.getElementById("provider-name").value = provider.name;
@@ -155,6 +156,15 @@ function openProviderModal(provider = null) {
         document.getElementById("provider-api-key").value = provider.api_key;
         document.getElementById("provider-model-name").value = provider.model_name;
         document.getElementById("provider-is-active").checked = provider.is_active === 1;
+    } else if (provider) {
+        title.innerText = "Add Provider";
+        document.getElementById("provider-id").value = "";
+        document.getElementById("provider-name").value = provider.name;
+        document.getElementById("provider-api-type").value = provider.api_type;
+        document.getElementById("provider-endpoint-url").value = provider.endpoint_url;
+        document.getElementById("provider-api-key").value = provider.api_key;
+        document.getElementById("provider-model-name").value = provider.model_name;
+        document.getElementById("provider-is-active").checked = false;
     } else {
         title.innerText = "Add Provider";
         document.getElementById("provider-id").value = "";
@@ -166,6 +176,18 @@ function openProviderModal(provider = null) {
 
 function closeProviderModal() {
     document.getElementById("provider-modal").classList.remove("open");
+}
+
+function duplicateProvider(provider) {
+    const copy = { ...provider, name: provider.name + " (copy)" };
+    delete copy.id;
+    openProviderModal(copy);
+}
+
+function duplicateProvider(provider) {
+    const copy = { ...provider, name: provider.name + " (copy)" };
+    delete copy.id;
+    openProviderModal(copy);
 }
 
 async function handleProviderSubmit(event) {
