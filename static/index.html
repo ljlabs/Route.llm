@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Proxy Router Dashboard</title>
+    <link rel="icon" type="image/x-icon" href="images/favicon.ico">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="glass-app">
+        <!-- Sidebar/Nav -->
+        <aside class="sidebar">
+            <div class="logo">
+                <img src="images/banner.png" alt="ModelRouter Banner" class="sidebar-logo">
+            </div>
+            <nav class="nav-links">
+                <button class="nav-btn active" data-tab="providers">
+                    <span class="nav-icon">⚙</span> Providers
+                </button>
+                <button class="nav-btn" data-tab="logs">
+                    <span class="nav-icon">▤</span> Request Logs
+                </button>
+                <button class="nav-btn" data-tab="playground">
+                    <span class="nav-icon">💬</span> Chat Testbed
+                </button>
+            </nav>
+            <div class="active-badge-container">
+                <div class="active-label">Active Provider:</div>
+                <div id="sidebar-active-provider" class="active-value">None Selected</div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Tab: Providers -->
+            <section id="tab-providers" class="tab-pane active">
+                <div class="section-header">
+                    <div>
+                        <h1>Model Providers</h1>
+                        <p class="subtitle">Configure and manage backend endpoints for your proxy.</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="openProviderModal()">+ Add Provider</button>
+                </div>
+
+                <div class="grid-container" id="providers-list">
+                    <!-- Providers will be injected dynamically -->
+                </div>
+            </section>
+
+            <!-- Tab: Logs -->
+            <section id="tab-logs" class="tab-pane">
+                <div class="section-header">
+                    <div>
+                        <h1>Request Logs & Settings</h1>
+                        <p class="subtitle">Inspect requests and adjust log rotation limits.</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-secondary" onclick="clearLogs()">Clear Logs</button>
+                        <button class="btn btn-primary" onclick="fetchLogs()">Refresh Logs</button>
+                    </div>
+                </div>
+
+                <!-- Settings Controls -->
+                <div class="settings-card glass-panel">
+                    <h3>Log Retention Settings</h3>
+                    <div class="settings-form">
+                        <div class="form-group">
+                            <label for="log-limit-select">Retention Mode</label>
+                            <select id="log-limit-select" class="form-control">
+                                <option value="-1">Disabled (Do not log requests)</option>
+                                <option value="10">Keep last 10 messages</option>
+                                <option value="25">Keep last 25 messages</option>
+                                <option value="50">Keep last 50 messages</option>
+                                <option value="100">Keep last 100 messages</option>
+                                <option value="500">Keep last 500 messages</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-secondary btn-save-settings" onclick="saveSettings()">Save Configuration</button>
+                    </div>
+                </div>
+
+                <!-- Log Panel Grid -->
+                <div class="log-panel-container">
+                    <div class="log-list-pane glass-panel">
+                        <h3>Logs History</h3>
+                        <div class="log-entries" id="logs-history">
+                            <!-- Logs will be loaded here -->
+                        </div>
+                    </div>
+                    <div class="log-detail-pane glass-panel" id="log-detail">
+                        <h3>Log Inspector</h3>
+                        <div class="no-log-selected">Select a log entry to view full details.</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab: Chat Testbed -->
+            <section id="tab-playground" class="tab-pane">
+                <div class="section-header">
+                    <div>
+                        <h1>Chat Testbed</h1>
+                        <p class="subtitle">Test the active LLM provider directly from this dashboard.</p>
+                    </div>
+                </div>
+
+                <div class="chat-container glass-panel">
+                    <div class="chat-header">
+                        <span class="status-dot green"></span>
+                        <span id="chat-active-provider">Checking provider...</span>
+                    </div>
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="chat-message assistant">
+                            Hello! I am connected to the active proxy provider. Send a message to test the response.
+                        </div>
+                    </div>
+                    <div class="chat-input-area">
+                        <input type="text" id="chat-input" placeholder="Type a message to test connection..." onkeydown="handleChatKey(event)">
+                        <button class="btn btn-primary btn-send" onclick="sendChatMessage()">Send</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Provider Add/Edit Modal -->
+    <div class="modal-overlay" id="provider-modal">
+        <div class="modal-content glass-panel">
+            <h2 id="modal-title">Add Provider</h2>
+            <form id="provider-form" onsubmit="handleProviderSubmit(event)">
+                <input type="hidden" id="provider-id">
+                <div class="form-group">
+                    <label for="provider-name">Provider Name</label>
+                    <input type="text" id="provider-name" required placeholder="e.g. OpenRouter Claude" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label for="provider-api-type">API Format Type</label>
+                    <select id="provider-api-type" class="form-control" onchange="suggestBaseUrl()">
+                        <option value="openai">OpenAI Compatible (or OpenRouter/Local/etc.)</option>
+                        <option value="anthropic">Anthropic API</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="provider-endpoint-url">Endpoint URL</label>
+                    <input type="url" id="provider-endpoint-url" required placeholder="https://api.openai.com/v1/chat/completions" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label for="provider-api-key">API Key</label>
+                    <div class="input-with-button">
+                        <input type="password" id="provider-api-key" required placeholder="API Secret Key" class="form-control" style="flex-grow: 1;">
+                        <button type="button" class="btn btn-secondary btn-icon" id="toggle-key-visibility" onclick="toggleKeyVisibility()" style="padding: 10px 14px; margin-left: 8px;">👁</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="provider-model-name">Model ID/Name</label>
+                    <input type="text" id="provider-model-name" required placeholder="e.g. gpt-4o or claude-3-5-sonnet" class="form-control">
+                </div>
+                <div class="form-group form-checkbox">
+                    <input type="checkbox" id="provider-is-active">
+                    <label for="provider-is-active">Make Active Provider</label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeProviderModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Provider</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
