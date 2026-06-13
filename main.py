@@ -14,6 +14,33 @@ import translator as ts
 
 app = FastAPI(title="LLM Proxy & Router")
 
+# Global rate limiter to protect free providers
+class GlobalRateLimiter:
+    def __init__(self, tps: float):
+        self.set_rate(tps)
+        self.last_request_time = 0
+        self.lock = asyncio.Lock()
+
+    def set_rate(self, tps: float):
+        self.tps = tps
+        self.interval = 1.0 / tps if tps > 0 else 0
+
+    async def wait(self):
+        if self.tps <= 0:
+            return
+
+        async with self.lock:
+            now = time.time()
+            elapsed = now - self.last_request_time
+            if elapsed < self.interval:
+                wait_time = self.interval - elapsed
+                await asyncio.sleep(wait_time)
+                self.last_request_time = time.time()
+            else:
+                self.last_request_time = now
+
+global_rate_limiter = None
+
 # Global client to handle connection pooling and keep-alive for streams
 http_client = None
 
@@ -30,6 +57,9 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     db.init_db()
+    global global_rate_limiter
+    global_rate_limiter = GlobalRateLimiter(db.get_rate_limit_tps())
+    
     global http_client
     # Disable timeout limits or set high timeout for streaming
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0, read=120.0))
@@ -86,13 +116,21 @@ def activate_provider(provider_id: int):
 # API: Settings Management
 @app.get("/api/settings")
 def get_settings():
-    return {"log_limit": db.get_log_limit()}
+    return {
+        "log_limit": db.get_log_limit(),
+        "rate_limit_tps": db.get_rate_limit_tps()
+    }
 
 @app.post("/api/settings")
 async def set_settings(request: Request):
     data = await request.json()
     if "log_limit" in data:
         db.set_log_limit(int(data["log_limit"]))
+    if "rate_limit_tps" in data:
+        db.set_rate_limit_tps(float(data["rate_limit_tps"]))
+        # Update global rate limiter
+        global global_rate_limiter
+        global_rate_limiter.set_rate(float(data["rate_limit_tps"]))
     return {"status": "success"}
 
 # API: Logs
@@ -140,6 +178,9 @@ async def test_chat(request: Request):
         print(f"\n--- OUTGOING TEST REQUEST TO PROVIDER [{active_prov['name']}] ---")
         print(f"URL: {url}")
         print(f"Payload: {json.dumps(payload, indent=2)}")
+        
+        # Apply global rate limit
+        await global_rate_limiter.wait()
         
         resp = await http_client.post(url, json=payload, headers=headers)
         
@@ -537,6 +578,9 @@ async def proxy_anthropic_messages(request: Request):
             print(f"\n--- PROXYING ANTHROPIC TO OPENAI [{active_prov['name']}] ---")
             print(f"Target URL: {url}")
             
+            # Apply global rate limit
+            await global_rate_limiter.wait()
+            
             if stream_requested:
                 req = http_client.build_request("POST", url, json=openai_req, headers=headers)
                 resp = await http_client.send(req, stream=True)
@@ -596,6 +640,9 @@ async def proxy_anthropic_messages(request: Request):
             
             print(f"\n--- PROXYING ANTHROPIC TO ANTHROPIC [{active_prov['name']}] ---")
             print(f"Target URL: {url}")
+            
+            # Apply global rate limit
+            await global_rate_limiter.wait()
             
             if stream_requested:
                 req = http_client.build_request("POST", url, json=req_body, headers=headers)
@@ -685,6 +732,9 @@ async def proxy_openai_chat_completions(request: Request):
             print(f"\n--- PROXYING OPENAI TO ANTHROPIC [{active_prov['name']}] ---")
             print(f"Target URL: {url}")
             
+            # Apply global rate limit
+            await global_rate_limiter.wait()
+            
             if stream_requested:
                 req = http_client.build_request("POST", url, json=anth_req, headers=headers)
                 resp = await http_client.send(req, stream=True)
@@ -742,6 +792,9 @@ async def proxy_openai_chat_completions(request: Request):
             
             print(f"\n--- PROXYING OPENAI TO OPENAI [{active_prov['name']}] ---")
             print(f"Target URL: {url}")
+            
+            # Apply global rate limit
+            await global_rate_limiter.wait()
             
             if stream_requested:
                 req = http_client.build_request("POST", url, json=req_body, headers=headers)

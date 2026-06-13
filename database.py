@@ -59,6 +59,7 @@ def init_db():
     
     # Insert default settings if not exist
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('log_limit', '50')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('rate_limit_tps', '0')") # 0 means disabled
 
     conn.commit()
     conn.close()
@@ -139,6 +140,14 @@ def get_log_limit():
     conn.close()
     return int(row['value']) if row else 50
 
+def get_rate_limit_tps():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = 'rate_limit_tps'")
+    row = cursor.fetchone()
+    conn.close()
+    return float(row['value']) if row else 0.0
+
 def set_log_limit(limit):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -147,6 +156,13 @@ def set_log_limit(limit):
     conn.close()
     # Enforce limit immediately
     enforce_log_limit()
+
+def set_rate_limit_tps(tps):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('rate_limit_tps', ?)", (str(tps),))
+    conn.commit()
+    conn.close()
 
 # Log operations
 def add_log(provider_name, request_method, request_path, request_body, response_status, response_body):

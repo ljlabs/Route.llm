@@ -225,6 +225,35 @@ async function fetchSettings() {
         const res = await fetch("/api/settings");
         const settings = await res.json();
         document.getElementById("log-limit-select").value = settings.log_limit.toString();
+        if (document.getElementById("global-rate-limit")) {
+            document.getElementById("global-rate-limit").value = settings.rate_limit_tps;
+        }
+        return settings;
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function openGlobalSettingsModal() {
+    await fetchSettings();
+    document.getElementById("global-settings-modal").classList.add("open");
+}
+
+function closeGlobalSettingsModal() {
+    document.getElementById("global-settings-modal").classList.remove("open");
+}
+
+async function saveGlobalRateLimit() {
+    const tps = parseFloat(document.getElementById("global-rate-limit").value) || 0;
+    try {
+        const res = await fetch("/api/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rate_limit_tps: tps })
+        });
+        if (res.ok) {
+            closeGlobalSettingsModal();
+        }
     } catch (err) {
         console.error(err);
     }
@@ -389,4 +418,22 @@ function handleChatKey(event) {
     if (event.key === "Enter") {
         sendChatMessage();
     }
+}
+
+function clearChat() {
+    const chatContainer = document.getElementById("chat-messages");
+    chatContainer.innerHTML = `
+        <div class="chat-message assistant">
+            Hello! I am connected to the active proxy provider. Send a message to test the response.
+        </div>
+    `;
+}
+
+function clearChat() {
+    const chatContainer = document.getElementById("chat-messages");
+    chatContainer.innerHTML = `
+        <div class="chat-message assistant">
+            Hello! I am connected to the active proxy provider. Send a message to test the response.
+        </div>
+    `;
 }
