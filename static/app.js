@@ -37,6 +37,8 @@ function suggestBaseUrl() {
         urlInput.value = "https://api.anthropic.com/v1/messages";
     } else if (apiType === "gemini") {
         urlInput.value = "https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions";
+    } else if (apiType === "mistral") {
+        urlInput.value = "https://api.mistral.ai/v1/chat/completions";
     } else {
         urlInput.value = "https://api.openai.com/v1/chat/completions";
     }
