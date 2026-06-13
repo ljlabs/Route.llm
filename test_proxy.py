@@ -123,6 +123,90 @@ def test_openai_to_anthropic_response_translation():
     assert anth_res["usage"]["input_tokens"] == 15
     assert anth_res["usage"]["output_tokens"] == 25
 
+def test_gemini_thought_signature_translation():
+    # 1. Test translation from Gemini response (OpenAI format) to Anthropic response
+    # This simulates receiving a tool call from Gemini with a signature
+    gemini_res = {
+        "id": "chatcmpl-gemini",
+        "model": "gemini-2.0-flash-thinking",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Thinking...",
+                    "tool_calls": [
+                        {
+                            "id": "call_gemini_123",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": "{\"location\": \"London\"}"
+                            },
+                            "extra_content": {
+                                "google": {
+                                    "thought_signature": "SIG_DATA_ABC_123"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 20}
+    }
+    
+    anth_res = ts.openai_to_anthropic_response(gemini_res)
+    
+    # The ID should now be "mangled" with the signature
+    expected_id = f"call_gemini_123{ts.SIGNATURE_SEPARATOR}SIG_DATA_ABC_123"
+    assert anth_res["content"][1]["id"] == expected_id
+    
+    # 2. Test translation from Anthropic request (with mangled ID) back to Gemini (OpenAI format)
+    # This simulates the next turn where the client sends back history or a tool result
+    anth_req = {
+        "model": "gemini-2.0-flash-thinking",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Thinking..."},
+                    {
+                        "type": "tool_use",
+                        "id": expected_id,
+                        "name": "get_weather",
+                        "input": {"location": "London"}
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": expected_id,
+                        "content": "Sunny, 20C"
+                    }
+                ]
+            }
+        ]
+    }
+    
+    openai_req = ts.anthropic_to_openai_request(anth_req, "gemini-2.0-flash-thinking")
+    
+    # Check assistant message has the restored signature in extra_content
+    assistant_msg = openai_req["messages"][0]
+    assert assistant_msg["role"] == "assistant"
+    assert assistant_msg["tool_calls"][0]["id"] == "call_gemini_123"
+    assert assistant_msg["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "SIG_DATA_ABC_123"
+    
+    # Check tool result message has the cleaned ID (no signature)
+    tool_msg = openai_req["messages"][1]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["tool_call_id"] == "call_gemini_123"
+    assert tool_msg["content"] == "Sunny, 20C"
+
 # --- Unit Tests for DB Limits and Logging ---
 
 def test_database_logging_limits(tmp_path):

@@ -35,6 +35,8 @@ function suggestBaseUrl() {
     const urlInput = document.getElementById("provider-endpoint-url");
     if (apiType === "anthropic") {
         urlInput.value = "https://api.anthropic.com/v1/messages";
+    } else if (apiType === "gemini") {
+        urlInput.value = "https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions";
     } else {
         urlInput.value = "https://api.openai.com/v1/chat/completions";
     }
@@ -176,12 +178,6 @@ function openProviderModal(provider = null) {
 
 function closeProviderModal() {
     document.getElementById("provider-modal").classList.remove("open");
-}
-
-function duplicateProvider(provider) {
-    const copy = { ...provider, name: provider.name + " (copy)" };
-    delete copy.id;
-    openProviderModal(copy);
 }
 
 function duplicateProvider(provider) {

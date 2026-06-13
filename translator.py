@@ -2,6 +2,8 @@ import json
 import uuid
 import time
 
+SIGNATURE_SEPARATOR = "____ts____"
+
 def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
     """Translates Anthropic /v1/messages request to OpenAI /v1/chat/completions request (including tools)"""
     messages = []
@@ -30,14 +32,28 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
                 if part_type == "text":
                     text_content += part.get("text", "")
                 elif part_type == "tool_use":
-                    tool_calls.append({
-                        "id": part.get("id"),
+                    tool_id = part.get("id")
+                    signature = None
+                    if tool_id and SIGNATURE_SEPARATOR in tool_id:
+                        parts = tool_id.split(SIGNATURE_SEPARATOR)
+                        tool_id = parts[0]
+                        signature = parts[1]
+                    
+                    tool_call = {
+                        "id": tool_id,
                         "type": "function",
                         "function": {
                             "name": part.get("name"),
                             "arguments": json.dumps(part.get("input", {}))
                         }
-                    })
+                    }
+                    if signature:
+                        tool_call["extra_content"] = {
+                            "google": {
+                                "thought_signature": signature
+                            }
+                        }
+                    tool_calls.append(tool_call)
                 elif part_type == "tool_result":
                     # In OpenAI, tool results must be separate messages with role "tool"
                     # We append them directly to the main messages list
@@ -50,9 +66,13 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
                                 sub_text += sub_part.get("text", "")
                         tool_result_content = sub_text
                     
+                    tool_use_id = part.get("tool_use_id")
+                    if tool_use_id and SIGNATURE_SEPARATOR in tool_use_id:
+                        tool_use_id = tool_use_id.split(SIGNATURE_SEPARATOR)[0]
+                        
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": part.get("tool_use_id"),
+                        "tool_call_id": tool_use_id,
                         "content": str(tool_result_content)
                     })
             
@@ -144,9 +164,16 @@ def openai_to_anthropic_request(openai_req: dict, target_model: str) -> dict:
                     args = json.loads(call_func.get("arguments", "{}"))
                 except Exception:
                     args = {}
+                
+                tool_id = call.get("id")
+                # Try to restore signature if present in extra_content
+                signature = call.get("extra_content", {}).get("google", {}).get("thought_signature")
+                if signature:
+                    tool_id = f"{tool_id}{SIGNATURE_SEPARATOR}{signature}"
+                    
                 anth_content.append({
                     "type": "tool_use",
-                    "id": call.get("id"),
+                    "id": tool_id,
                     "name": call_func.get("name"),
                     "input": args
                 })
@@ -217,9 +244,16 @@ def openai_to_anthropic_response(openai_res: dict) -> dict:
                     args = json.loads(call_func.get("arguments", "{}"))
                 except Exception:
                     args = {}
+                
+                tool_id = call.get("id", f"toolu_{uuid.uuid4().hex}")
+                # Embed thought_signature if present
+                signature = call.get("extra_content", {}).get("google", {}).get("thought_signature")
+                if signature:
+                    tool_id = f"{tool_id}{SIGNATURE_SEPARATOR}{signature}"
+                    
                 content_blocks.append({
                     "type": "tool_use",
-                    "id": call.get("id", f"toolu_{uuid.uuid4().hex}"),
+                    "id": tool_id,
                     "name": call_func.get("name"),
                     "input": args
                 })
@@ -245,6 +279,7 @@ def openai_to_anthropic_response(openai_res: dict) -> dict:
             "output_tokens": openai_res.get("usage", {}).get("completion_tokens", 0)
         }
     }
+
 
 def anthropic_to_openai_response(anth_res: dict) -> dict:
     """Translates Anthropic non-streaming response to OpenAI response (including tool calls)"""

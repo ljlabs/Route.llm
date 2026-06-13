@@ -125,7 +125,7 @@ async def test_chat(request: Request):
     url = active_prov["endpoint_url"]
     
     try:
-        if active_prov["api_type"] == "openai":
+        if active_prov["api_type"] in ["openai", "gemini"]:
             headers = {"Authorization": f"Bearer {active_prov['api_key']}"}
             payload = test_req
         else: # anthropic
@@ -160,7 +160,7 @@ async def test_chat(request: Request):
             raise HTTPException(status_code=500, detail=err_msg)
         
         # Process success response
-        if active_prov["api_type"] == "openai":
+        if active_prov["api_type"] in ["openai", "gemini"]:
             content = resp_json["choices"][0]["message"]["content"]
         else:
             openai_res = ts.anthropic_to_openai_response(resp_json)
@@ -200,13 +200,15 @@ async def stream_generator(response, active_prov, is_incoming_anthropic, is_back
     tool_idx_map = {}
     next_anth_block_idx = 1 # Index 0 is text content block
     
+    is_gemini = active_prov.get("api_type") == "gemini"
+    
     try:
         async for line in response.aiter_lines():
             if not line:
                 continue
                 
-            # Translation: Incoming Anthropic, Backend OpenAI (e.g. OpenRouter)
-            if is_incoming_anthropic and is_backend_openai:
+            # Translation: Incoming Anthropic, Backend OpenAI (e.g. OpenRouter, Gemini)
+            if is_incoming_anthropic and (is_backend_openai or is_gemini):
                 if line.startswith("data:"):
                     data_content = line.replace("data:", "").strip()
                     if data_content == "[DONE]":
@@ -268,6 +270,11 @@ async def stream_generator(response, active_prov, is_incoming_anthropic, is_back
                             if call_idx not in tool_idx_map:
                                 anth_block_id = f"toolu_{os.urandom(8).hex()}"
                                 tool_name = call.get("function", {}).get("name", "unknown_tool")
+                                
+                                signature = call.get("extra_content", {}).get("google", {}).get("thought_signature")
+                                if signature:
+                                    anth_block_id = f"{anth_block_id}{ts.SIGNATURE_SEPARATOR}{signature}"
+                                    
                                 tool_idx_map[call_idx] = {
                                     "id": anth_block_id,
                                     "name": tool_name,
@@ -345,7 +352,8 @@ async def stream_generator(response, active_prov, is_incoming_anthropic, is_back
                         pass
                         
             # Translation: Incoming OpenAI, Backend Anthropic
-            elif not is_incoming_anthropic and not is_backend_openai:
+            elif not is_incoming_anthropic and not (is_backend_openai or is_gemini):
+
                 if line.startswith("data:"):
                     data_content = line.replace("data:", "").strip()
                     try:
@@ -458,7 +466,7 @@ async def proxy_anthropic_messages(request: Request):
     req_body_str = json.dumps(req_body, indent=2)
     stream_requested = req_body.get("stream", False)
     
-    is_backend_openai = active_prov["api_type"] == "openai"
+    is_backend_openai = active_prov["api_type"] in ["openai", "gemini"]
     url = active_prov["endpoint_url"]
     
     try:
@@ -602,7 +610,7 @@ async def proxy_openai_chat_completions(request: Request):
     req_body_str = json.dumps(req_body, indent=2)
     stream_requested = req_body.get("stream", False)
     
-    is_backend_openai = active_prov["api_type"] == "openai"
+    is_backend_openai = active_prov["api_type"] in ["openai", "gemini"]
     url = active_prov["endpoint_url"]
     
     try:
