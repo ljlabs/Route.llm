@@ -262,13 +262,13 @@ def test_mistral_sanitization():
 
 @pytest.mark.anyio
 async def test_rate_limiter_logic():
-    # Import from main. Use a local import to avoid issues if main has side effects
-    from main import GlobalRateLimiter
+    # Import from core.rate_limiter
+    from core.rate_limiter import RateLimiter
     import asyncio
-    
+
     # Test 2 TPS (0.5s interval)
-    limiter = GlobalRateLimiter(2.0)
-    
+    limiter = RateLimiter(2.0)
+
     start = time.time()
     # First call - should be instant
     await limiter.wait()
@@ -277,17 +277,18 @@ async def test_rate_limiter_logic():
     # Third call - should wait ~0.5s (total ~1.0s)
     await limiter.wait()
     end = time.time()
-    
+
     duration = end - start
     # We expect roughly 1.0s total wait for 3 calls at 2 TPS
     assert 0.9 <= duration <= 1.2
-    
+
     # Test disabled (0 TPS)
     limiter.set_rate(0)
     start = time.time()
-    for _ in range(5):
+    for _ in range(10):
         await limiter.wait()
-    end = time.time()
+    assert time.time() - start < 0.1
+
     # Should be near instant
     assert (end - start) < 0.1
 
