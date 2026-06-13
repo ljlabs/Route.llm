@@ -1,10 +1,9 @@
-# ⇄ ModelRouter
+![image](https://raw.githubusercontent.com/ljlabs/Route.llm/refs/heads/main/static/images/banner.png)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100.0%2B-009688.svg?style=flat&logo=FastAPI&logoColor=white)](https://fastapi.tiangolo.com/)
 
-**ModelRouter** is a lightweight, local LLM proxy and routing engine. It acts as an adaptable translation bridge between the **Anthropic Messages** and **OpenAI Chat Completions** protocols, allowing you to route any AI agent (like **Claude Code**) to your choice of backend models—including OpenRouter, Anthropic, OpenAI, or local servers.
+**Routte.LLM** is a lightweight, local LLM proxy and routing engine. It acts as an adaptable translation bridge between the **Anthropic Messages** and **OpenAI Chat Completions** protocols, allowing you to route any AI agent (like **Claude Code**) to your choice of backend models—including OpenRouter, Anthropic, OpenAI, or local servers.
 
 It also allows you to hot swap backend providers without restarting your claude code sessions.
 ---
@@ -49,7 +48,7 @@ Open the Dashboard: 🔗 **[http://localhost:8000/](http://localhost:8000/)**
 
 ## Client Configurations
 
-To route your favorite developer tools and coding agents through **ModelRouter**, simply override their default base URL.
+To route your favorite developer tools and coding agents through **Route.LLM**, simply override their default base URL.
 
 ### Pointing Claude Code
 Run Claude Code by setting the `ANTHROPIC_BASE_URL` environment variable pointing to your local proxy server:
@@ -66,7 +65,7 @@ claude
 
 #### How It Works Under the Hood:
 1. **Claude Code** dispatches Anthropic protocol `/v1/messages` requests to `http://localhost:8000/v1/messages`.
-2. **ModelRouter** intercepts the request and verifies the active provider format.
+2. **Route.LLM** intercepts the request and verifies the active provider format.
 3. If the active provider is an OpenAI-compatible server (e.g. OpenRouter):
    - It converts the Anthropic tool schemas, messages, and parameters into OpenAI specifications.
    - It fires the request to your configured `endpoint_url`.
