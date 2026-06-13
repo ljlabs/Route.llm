@@ -144,6 +144,50 @@ async def test_chat(request: Request):
         
         print(f"Response status: {resp.status_code}")
         
+        # Handle non-200 responses gracefully
+        if resp.status_code != 200:
+            error_detail = f"Backend returned {resp.status_code}"
+            try:
+                error_json = resp.json()
+                # Try to extract message from various common error formats
+                if "error" in error_json:
+                    if isinstance(error_json["error"], dict):
+                        error_detail += f": {error_json['error'].get('message', '')}"
+                    else:
+                        error_detail += f": {error_json['error']}"
+                elif "detail" in error_json:
+                    error_detail += f": {error_json['detail']}"
+                elif "message" in error_json:
+                    error_detail += f": {error_json['message']}"
+            except Exception:
+                # If not JSON, use the raw text truncated
+                if resp.text:
+                    error_detail += f": {resp.text[:200]}"
+
+            # Add human-friendly hints for common status codes
+            if resp.status_code == 401:
+                error_detail = f"Unauthorized (401): Check your API Key. {error_detail}"
+            elif resp.status_code == 404:
+                error_detail = f"Not Found (404): Check your Endpoint URL or Model Name. {error_detail}"
+            elif resp.status_code == 403:
+                error_detail = f"Forbidden (403): Access denied. {error_detail}"
+            elif resp.status_code == 429:
+                error_detail = f"Rate Limited (429): Too many requests. {error_detail}"
+            elif 400 <= resp.status_code < 500:
+                error_detail = f"Request Error ({resp.status_code}): {error_detail}"
+            elif resp.status_code >= 500:
+                error_detail = f"Server Error ({resp.status_code}): Backend is down. {error_detail}"
+
+            db.add_log(
+                provider_name=active_prov["name"],
+                request_method="POST",
+                request_path="/api/chat",
+                request_body=json.dumps(payload, indent=2),
+                response_status=resp.status_code,
+                response_body=resp.text
+            )
+            raise HTTPException(status_code=resp.status_code, detail=error_detail)
+
         try:
             resp_json = resp.json()
         except Exception as json_err:
@@ -160,11 +204,23 @@ async def test_chat(request: Request):
             raise HTTPException(status_code=500, detail=err_msg)
         
         # Process success response
-        if active_prov["api_type"] in ["openai", "gemini"]:
-            content = resp_json["choices"][0]["message"]["content"]
-        else:
-            openai_res = ts.anthropic_to_openai_response(resp_json)
-            content = openai_res["choices"][0]["message"]["content"]
+        try:
+            if active_prov["api_type"] in ["openai", "gemini"]:
+                content = resp_json["choices"][0]["message"]["content"]
+            else:
+                openai_res = ts.anthropic_to_openai_response(resp_json)
+                content = openai_res["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as parse_err:
+            err_msg = f"Response Parsing Error: {str(parse_err)}. The provider returned a format we didn't expect."
+            db.add_log(
+                provider_name=active_prov["name"],
+                request_method="POST",
+                request_path="/api/chat",
+                request_body=json.dumps(payload, indent=2),
+                response_status=resp.status_code,
+                response_body=json.dumps(resp_json, indent=2)
+            )
+            raise HTTPException(status_code=500, detail=err_msg)
             
         db.add_log(
             provider_name=active_prov["name"],
