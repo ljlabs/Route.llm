@@ -266,8 +266,8 @@ def get_logs():
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
-
 def clear_logs():
+    """Clear all logs from the database."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM logs")
@@ -291,3 +291,22 @@ def get_metrics_summary():
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+def get_latency_history(limit=50):
+    """Get recent latency history for line chart."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            timestamp, 
+            provider_name, 
+            latency_ms 
+        FROM logs 
+        WHERE response_status = 200 
+        ORDER BY timestamp DESC 
+        LIMIT ?
+    """, (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in reversed(rows)]
+

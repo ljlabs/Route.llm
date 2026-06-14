@@ -23,3 +23,14 @@ async def get_metrics():
     except Exception as e:
         logger.error(f"Failed to get metrics summary: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve metrics summary")
+
+@router.get("/history")
+async def get_latency_history(limit: int = 50):
+    """
+    Get recent latency history for all providers.
+    """
+    try:
+        return db.get_latency_history(limit)
+    except Exception as e:
+        logger.error(f"Failed to get latency history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve latency history")
