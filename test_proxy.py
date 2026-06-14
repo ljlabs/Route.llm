@@ -510,6 +510,8 @@ async def test_router_routing_logic(tmp_path):
         from core.rate_limiter import RateLimiter
         from core.router import RouterService
         router = RouterService(http_client=client, rate_limiter=RateLimiter(100))
+        # Invalidate cache to ensure it reads from the new DB
+        router.provider_service.reload_active_provider()
 
         # Verify the provider selection logic used by the router
         service = router.provider_service

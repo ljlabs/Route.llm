@@ -56,6 +56,7 @@ from api.logs import router as logs_router
 from api.chat import router as chat_router
 from api.proxy import router as proxy_router
 from api.routing import router as routing_router
+from api.metrics import router as metrics_router
 
 app.include_router(providers_router)
 app.include_router(settings_router)
@@ -63,6 +64,7 @@ app.include_router(logs_router)
 app.include_router(chat_router)
 app.include_router(proxy_router)
 app.include_router(routing_router)
+app.include_router(metrics_router)
 
 # Mount static files for the Dashboard
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")

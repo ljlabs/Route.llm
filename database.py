@@ -70,9 +70,20 @@ def init_db():
             request_path TEXT,
             request_body TEXT,
             response_status INTEGER,
-            response_body TEXT
+            response_body TEXT,
+            tokens_sent INTEGER DEFAULT 0,
+            tokens_received INTEGER DEFAULT 0,
+            latency_ms INTEGER DEFAULT 0
         )
     """)
+
+    # Migration: Add metrics columns if they don't exist
+    for col in ["tokens_sent", "tokens_received", "latency_ms"]:
+        try:
+            cursor.execute(f"ALTER TABLE logs ADD COLUMN {col} INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
     
     # Insert default settings if not exist
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('log_limit', '50')")
@@ -209,21 +220,21 @@ def set_rate_limit_tps(tps):
     conn.close()
 
 # Log operations
-def add_log(provider_name, request_method, request_path, request_body, response_status, response_body):
+def add_log(provider_name, request_method, request_path, request_body, response_status, response_body, tokens_sent=0, tokens_received=0, latency_ms=0):
     limit = get_log_limit()
     if limit == -1:
         return # Logging is disabled
-        
+
     conn = get_db_connection()
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
     cursor.execute("""
-        INSERT INTO logs (timestamp, provider_name, request_method, request_path, request_body, response_status, response_body)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (timestamp, provider_name, request_method, request_path, request_body, response_status, response_body))
+        INSERT INTO logs (timestamp, provider_name, request_method, request_path, request_body, response_status, response_body, tokens_sent, tokens_received, latency_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (timestamp, provider_name, request_method, request_path, request_body, response_status, response_body, tokens_sent, tokens_received, latency_ms))
     conn.commit()
     conn.close()
-    
+
     enforce_log_limit()
 
 def enforce_log_limit():
@@ -262,3 +273,21 @@ def clear_logs():
     cursor.execute("DELETE FROM logs")
     conn.commit()
     conn.close()
+
+def get_metrics_summary():
+    """Get aggregated metrics per provider."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            provider_name,
+            COUNT(*) as request_count,
+            SUM(tokens_sent) as total_tokens_sent,
+            SUM(tokens_received) as total_tokens_received,
+            AVG(latency_ms) as avg_latency
+        FROM logs
+        GROUP BY provider_name
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]

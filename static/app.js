@@ -26,6 +26,8 @@ function initTabs() {
                 fetchLogs();
             } else if (tabId === "routing") {
                 fetchRouting();
+            } else if (tabId === "metrics") {
+                updateMetricsCharts();
             }
         });
     });
@@ -62,36 +64,46 @@ function toggleKeyVisibility() {
 // Fetch and Render Providers
 async function fetchProviders() {
     try {
-        const res = await fetch("/api/providers");
-        const providers = await res.json();
-        renderProviders(providers);
-        
+        const [providersRes, metricsRes] = await Promise.all([
+            fetch("/api/providers"),
+            fetch("/api/metrics")
+        ]);
+        const providers = await providersRes.json();
+        const metrics = await metricsRes.json();
+
+        renderProviders(providers, metrics);
+
         // Update sidebar and playground details
         const active = providers.find(p => p.is_active === 1);
         const activeText = active ? `${active.name} (${active.model_name})` : "None Selected";
         document.getElementById("sidebar-active-provider").innerText = activeText;
-        
+
         const chatStatusText = document.getElementById("chat-active-provider");
         if (chatStatusText) {
-            chatStatusText.innerText = active 
-                ? `Connected to Active Provider: ${active.name} [${active.model_name}]` 
+            chatStatusText.innerText = active
+                ? `Connected to Active Provider: ${active.name} [${active.model_name}]`
                 : "No Active Provider Selected. Configure one in Providers tab.";
         }
     } catch (err) {
-        console.error("Error fetching providers:", err);
+        console.error("Error fetching providers/metrics:", err);
     }
 }
 
-function renderProviders(providers) {
+function renderProviders(providers, metrics = []) {
     const container = document.getElementById("providers-list");
     container.innerHTML = "";
-    
+
     if (providers.length === 0) {
         container.innerHTML = `<div class="glass-panel" style="grid-column: 1/-1; text-align: center; color: var(--text-secondary);">No providers configured. Click "Add Provider" to get started.</div>`;
         return;
     }
-    
+
     providers.forEach(p => {
+        const providerMetrics = metrics.find(m => m.provider_name === p.name) || {};
+        const avgLatency = providerMetrics.avg_latency
+            ? `${Math.round(providerMetrics.avg_latency)}ms`
+            : 'N/A';
+
         const card = document.createElement("div");
         card.className = `provider-card glass-panel ${p.is_active ? 'active-card' : ''}`;
 
@@ -111,6 +123,7 @@ function renderProviders(providers) {
                 <div><span>Endpoint:</span> <span class="val">${p.endpoint_url}</span></div>
                 <div><span>Routing ID:</span> <span class="val">${p.model_name}</span></div>
                 <div><span>Rate Limit:</span> <span class="val">${rateLimitText}</span></div>
+                <div><span>Avg Latency:</span> <span class="val">${avgLatency}</span></div>
                 <div><span>API Key:</span> <span class="val">••••••••</span></div>
             </div>
             <div class="card-actions">
@@ -531,4 +544,113 @@ async function deleteRoutingMapping(modelId) {
     } catch (err) {
         console.error(err);
     }
+}
+
+// Metrics Charting Logic
+let metricsCharts = {};
+
+async function updateMetricsCharts() {
+    try {
+        const res = await fetch("/api/metrics");
+        const data = await res.json();
+        renderMetricsCharts(data);
+    } catch (err) {
+        console.error("Error updating metrics charts:", err);
+    }
+}
+
+function renderMetricsCharts(data) {
+    const labels = data.map(m => m.provider_name);
+    const requestCounts = data.map(m => m.request_count);
+    const tokensSent = data.map(m => m.total_tokens_sent);
+    const tokensReceived = data.map(m => m.total_tokens_received);
+    const avgLatencies = data.map(m => m.avg_latency);
+
+    const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                labels: { color: '#a0a0a0', font: { family: 'Inter' } }
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                grid: { color: 'rgba(255,255,255,0.1)' },
+                ticks: { color: '#a0a0a0', font: { family: 'Inter' } }
+            },
+            x: {
+                grid: { display: false },
+                ticks: { color: '#a0a0a0', font: { family: 'Inter' } }
+            }
+        }
+    };
+
+    // Request Volume Chart
+    if (metricsCharts.requests) metricsCharts.requests.destroy();
+    metricsCharts.requests = new Chart(document.getElementById("chart-requests"), {
+        type: 'pie',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: requestCounts,
+                backgroundColor: ['#4f46e5', '#7c3aed', '#2563eb', '#db2777', '#ea580c', '#16a34a'],
+                borderWidth: 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { color: '#a0a0a0', font: { family: 'Inter' } } }
+            }
+        }
+    });
+
+    // Token Usage Chart (Stacked Bar)
+    if (metricsCharts.tokens) metricsCharts.tokens.destroy();
+    metricsCharts.tokens = new Chart(document.getElementById("chart-tokens"), {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Sent',
+                    data: tokensSent,
+                    backgroundColor: '#4f46e5',
+                    borderRadius: 4
+                },
+                {
+                    label: 'Received',
+                    data: tokensReceived,
+                    backgroundColor: '#7c3aed',
+                    borderRadius: 4
+                }
+            ]
+        },
+        options: {
+            ...commonOptions,
+            scales: {
+                x: { ...commonOptions.scales.x, stacked: true },
+                y: { ...commonOptions.scales.y, stacked: true }
+            }
+        }
+    });
+
+    // Average Latency Chart
+    if (metricsCharts.latency) metricsCharts.latency.destroy();
+    metricsCharts.latency = new Chart(document.getElementById("chart-latency"), {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Latency (ms)',
+                data: avgLatencies,
+                backgroundColor: '#2563eb',
+                borderRadius: 4
+            }]
+        },
+        options: commonOptions
+    });
 }

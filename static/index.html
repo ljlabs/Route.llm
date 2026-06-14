@@ -27,6 +27,9 @@
                 <button class="nav-btn" data-tab="logs">
                     <span class="nav-icon">▤</span> Request Logs
                 </button>
+                <button class="nav-btn" data-tab="metrics">
+                    <span class="nav-icon">📈</span> Metrics
+                </button>
                 <button class="nav-btn" data-tab="playground">
                     <span class="nav-icon">💬</span> Chat Testbed
                 </button>
@@ -128,6 +131,34 @@
                     <div class="log-detail-pane glass-panel" id="log-detail">
                         <h3>Log Inspector</h3>
                         <div class="no-log-selected">Select a log entry to view full details.</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab: Metrics -->
+            <section id="tab-metrics" class="tab-pane">
+                <div class="section-header">
+                    <div>
+                        <h1>System Metrics</h1>
+                        <p class="subtitle">Observability into usage volume, token consumption, and latency.</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="updateMetricsCharts()">Refresh Metrics</button>
+                    </div>
+                </div>
+
+                <div class="metrics-grid">
+                    <div class="metrics-card glass-panel">
+                        <h3>Request Volume</h3>
+                        <canvas id="chart-requests"></canvas>
+                    </div>
+                    <div class="metrics-card glass-panel">
+                        <h3>Token Usage</h3>
+                        <canvas id="chart-tokens"></canvas>
+                    </div>
+                    <div class="metrics-card glass-panel">
+                        <h3>Average Latency (ms)</h3>
+                        <canvas id="chart-latency"></canvas>
                     </div>
                 </div>
             </section>
@@ -255,6 +286,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

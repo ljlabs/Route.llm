@@ -7,6 +7,7 @@ Main routing logic that coordinates providers, HTTP client, and rate limiting.
 import json
 import logging
 from typing import Any, Dict, Optional
+import time
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -22,10 +23,10 @@ logger = logging.getLogger(__name__)
 class RouterService:
     """
     Main service for routing requests to providers.
-    
+
     Coordinates between provider service, HTTP client, and rate limiter.
     """
-    
+
     def __init__(
         self,
         http_client: httpx.AsyncClient,
@@ -36,7 +37,7 @@ class RouterService:
         self.http_client = http_client
         self.rate_limiter = rate_limiter
         self.logger_service = logger_service
-    
+
     async def route_anthropic_request(
         self,
         anthropic_request: Dict[str, Any],
@@ -75,9 +76,9 @@ class RouterService:
 
         # Wrap request to provider format
         wrapped_request = provider.wrap_request(anthropic_request)
-        
+
         req_body_str = json.dumps(anthropic_request, indent=2)
-        
+
         try:
             if stream:
                 return await self._handle_streaming(
@@ -135,26 +136,19 @@ class RouterService:
                 status_code=400,
                 detail="No active provider configured"
             )
-            
+
         # Apply rate limiting
         await self.rate_limiter.wait()
-        
-        # If backend is OpenAI-compatible and target is OpenAI, we might still need to 
-        # translate if we want to support things like Anthropic -> OpenAI translation
-        # but here we are starting from OpenAI format.
-        
+
         # For now, we translate OpenAI -> Anthropic then use provider.wrap_request
-        # This is a bit inefficient but ensures consistency if the provider is Anthropic.
-        # If the provider is OpenAI, wrap_request will translate back to OpenAI.
-        
         from .providers.translation import openai_to_anthropic_request
         anthropic_request = openai_to_anthropic_request(openai_request, provider.model_name)
-        
+
         # Wrap request to provider format
         wrapped_request = provider.wrap_request(anthropic_request)
-        
+
         req_body_str = json.dumps(openai_request, indent=2)
-        
+
         try:
             if stream:
                 return await self._handle_streaming(
@@ -180,7 +174,7 @@ class RouterService:
         except Exception as e:
             logger.error(f"Routing error: {e}")
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     async def _handle_non_streaming(
         self,
         provider: BaseProvider,
@@ -192,18 +186,22 @@ class RouterService:
     ) -> JSONResponse:
         """Handle non-streaming request."""
         logger.info(f"Routing non-streaming request to {provider.name}")
-        
+
+        start_time = time.perf_counter()
+
         # Send request
         response = await self.http_client.post(
             provider.endpoint_url,
             json=wrapped_request,
             headers=provider.get_headers()
         )
-        
+
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+
         # Handle error responses
         if response.status_code >= 400:
             await self._handle_http_error(provider, response, req_body_str, path=path)
-        
+
         # Get response data
         try:
             response_json = response.json()
@@ -213,17 +211,32 @@ class RouterService:
                 status_code=500,
                 detail=f"Invalid JSON response: {str(e)}"
             )
-        
+
+        # Extract token usage from raw response
+        tokens_sent = 0
+        tokens_received = 0
+        usage = response_json.get("usage", {})
+        if usage:
+            # Support both OpenAI and Anthropic formats
+            tokens_sent = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+            tokens_received = usage.get("completion_tokens") or usage.get("output_tokens") or 0
+
+        # Fallback to estimation if usage is missing
+        if tokens_sent == 0:
+            tokens_sent = self._estimate_request_tokens(original_request)
+        if tokens_received == 0:
+            tokens_received = self._estimate_response_tokens(response_json)
+
         # Unwrap response to Anthropic format first
         anthropic_response = provider.unwrap_response(response_json)
-        
+
         # If target was OpenAI, translate back to OpenAI
         if is_openai_target:
             from .providers.translation import anthropic_to_openai_response
             final_response = anthropic_to_openai_response(anthropic_response)
         else:
             final_response = anthropic_response
-        
+
         # Log the request
         self._log_request(
             provider=provider,
@@ -231,11 +244,92 @@ class RouterService:
             path=path,
             request_body=req_body_str,
             response_status=response.status_code,
-            response_body=json.dumps(response_json, indent=2)
+            response_body=json.dumps(response_json, indent=2),
+            tokens_sent=tokens_sent,
+            tokens_received=tokens_received,
+            latency_ms=latency_ms
         )
-        
+
         return JSONResponse(content=final_response, status_code=200)
-    
+
+    def _extract_usage_from_line(self, line: str) -> Dict[str, int]:
+        """Attempt to extract token usage from a single SSE line."""
+        usage = {"tokens_sent": 0, "tokens_received": 0}
+        if not line.startswith("data:"):
+            return usage
+
+        try:
+            data_content = line.replace("data:", "").strip()
+            if not data_content or data_content == "[DONE]":
+                return usage
+
+            data = json.loads(data_content)
+
+            # OpenAI format: usage in the choice or top level
+            if "usage" in data:
+                u = data["usage"]
+                usage["tokens_sent"] = u.get("prompt_tokens") or 0
+                usage["tokens_received"] = u.get("completion_tokens") or 0
+            elif "choices" in data and data["choices"]:
+                choice = data["choices"][0]
+                if "usage" in choice:
+                    u = choice["usage"]
+                    usage["tokens_sent"] = u.get("prompt_tokens") or 0
+                    usage["tokens_received"] = u.get("completion_tokens") or 0
+
+            # Anthropic format: usage in message_delta
+            elif data.get("type") == "message_delta":
+                u = data.get("usage", {})
+                usage["tokens_sent"] = u.get("input_tokens") or 0
+                usage["tokens_received"] = u.get("output_tokens") or 0
+
+        except Exception:
+            pass
+
+        return usage
+
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count based on character length (heuristic: 4 chars/token)."""
+        if not text:
+            return 0
+        return max(1, len(text) // 4)
+
+    def _estimate_request_tokens(self, request_body: Any) -> int:
+        """Estimate tokens in the request body."""
+        try:
+            data = request_body if isinstance(request_body, dict) else json.loads(request_body)
+            text = ""
+            for msg in data.get("messages", []):
+                content = msg.get("content", "")
+                if isinstance(content, str): text += content
+                elif isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text += item.get("text", "")
+            return self._estimate_tokens(text) if text else self._estimate_tokens(str(request_body))
+        except Exception:
+            return self._estimate_tokens(str(request_body))
+
+    def _estimate_response_tokens(self, response_body: Any) -> int:
+        """Estimate tokens in the response body."""
+        try:
+            data = response_body if not isinstance(response_body, str) else json.loads(response_body)
+            text = ""
+            if isinstance(data, list):
+                for block in data:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text += block.get("text", "")
+            elif isinstance(data, dict):
+                if "choices" in data:
+                    for choice in data["choices"]:
+                        msg = choice.get("message", {})
+                        text += msg.get("content") or msg.get("text") or ""
+                else:
+                    text += data.get("text") or data.get("content") or ""
+            return self._estimate_tokens(text) if text else self._estimate_tokens(str(response_body))
+        except Exception:
+            return self._estimate_tokens(str(response_body))
+
     async def _handle_streaming(
         self,
         provider: BaseProvider,
@@ -247,7 +341,7 @@ class RouterService:
     ) -> StreamingResponse:
         """Handle streaming request."""
         logger.info(f"Routing streaming request to {provider.name}")
-        
+
         # Build streaming request
         request = self.http_client.build_request(
             "POST",
@@ -255,39 +349,61 @@ class RouterService:
             json=wrapped_request,
             headers=provider.get_headers()
         )
-        
+
         # Send request with streaming
         response = await self.http_client.send(request, stream=True)
-        
+
         # Handle error responses
         if response.status_code >= 400:
             await response.aread()
             error_text = response.text
             await response.aclose()
             await self._handle_http_error(provider, response, req_body_str, error_text, path=path)
-        
+
         # Get stream translator from provider
         stream_translator = provider.get_stream_translator(target_format)
-        
+
         # Provider config for the translator
         provider_config = {
             "name": provider.name,
             "api_type": provider.api_type,
             "model_name": provider.model_name,
         }
-        
+
         # Create async generator for streaming
         async def stream_generator():
+            start_time = time.perf_counter()
+            latency_ms = 0
             accumulated_blocks = []
-            
+            tokens_sent = 0
+            tokens_received = 0
+            first_byte_received = False
+
             try:
                 async for line in stream_translator.translate_stream(
                     response,
                     provider_config,
                     accumulated_blocks
                 ):
+                    if not first_byte_received:
+                        first_byte_received = True
+
+                    # Extract usage from the line
+                    u = self._extract_usage_from_line(line)
+                    tokens_sent += u["tokens_sent"]
+                    tokens_received += u["tokens_received"]
+
                     yield line
             finally:
+                # Total latency: time to last token (completion)
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                
+                # Fallback to estimation if usage is missing
+                if tokens_sent == 0:
+                    tokens_sent = self._estimate_request_tokens(original_request)
+                if tokens_received == 0:
+                    tokens_received = self._estimate_response_tokens(accumulated_blocks)
+
                 # Log the completed stream
                 self._log_request(
                     provider=provider,
@@ -295,14 +411,17 @@ class RouterService:
                     path=path,
                     request_body=req_body_str,
                     response_status=200,
-                    response_body=json.dumps(accumulated_blocks, indent=2) if accumulated_blocks else "[Streamed response]"
+                    response_body=json.dumps(accumulated_blocks, indent=2) if accumulated_blocks else "[Streamed response]",
+                    tokens_sent=tokens_sent,
+                    tokens_received=tokens_received,
+                    latency_ms=latency_ms
                 )
-        
+
         return StreamingResponse(
             stream_generator(),
             media_type="text/event-stream"
         )
-    
+
     async def _handle_http_error(
         self,
         provider: BaseProvider,
@@ -313,13 +432,13 @@ class RouterService:
     ):
         """Handle HTTP error responses."""
         status = response.status_code
-        
+
         if error_text is None:
             try:
                 error_text = response.text
             except Exception:
                 error_text = ""
-        
+
         # Try to extract error message
         error_detail = f"Backend returned {status}"
         try:
@@ -331,7 +450,7 @@ class RouterService:
         except Exception:
             if error_text:
                 error_detail += f": {error_text[:200]}"
-        
+
         # Add hints for common status codes
         if status == 401:
             error_detail = f"Unauthorized (401): Check your API Key. {error_detail}"
@@ -341,7 +460,7 @@ class RouterService:
             error_detail = f"Forbidden (403): Access denied. {error_detail}"
         elif status == 429:
             error_detail = f"Rate Limited (429): Too many requests. {error_detail}"
-        
+
         # Log the error
         self._log_request(
             provider=provider,
@@ -351,9 +470,9 @@ class RouterService:
             response_status=status,
             response_body=error_text or str(error_detail)
         )
-        
+
         raise HTTPException(status_code=status, detail=error_detail)
-    
+
     def _log_request(
         self,
         provider: BaseProvider,
@@ -361,7 +480,10 @@ class RouterService:
         path: str,
         request_body: str,
         response_status: int,
-        response_body: str
+        response_body: str,
+        tokens_sent: int = 0,
+        tokens_received: int = 0,
+        latency_ms: int = 0
     ):
         """Log the request to database."""
         try:
@@ -372,7 +494,10 @@ class RouterService:
                 request_path=path,
                 request_body=request_body,
                 response_status=response_status,
-                response_body=response_body
+                response_body=response_body,
+                tokens_sent=tokens_sent,
+                tokens_received=tokens_received,
+                latency_ms=latency_ms
             )
         except Exception as e:
             logger.error(f"Failed to log request: {e}")

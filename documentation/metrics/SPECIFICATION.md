@@ -5,19 +5,19 @@ The goal is to add observability to the Route.LLM dashboard, allowing users to m
 
 ## Requirements
 
-### 1. Metrics Tracking
-The system must track the following for every request:
-- **Latency**: The time taken from sending the request to receiving the full response (or the first byte for streaming).
-- **Token Usage**: Number of prompt tokens (sent) and completion tokens (received).
+### 1. Metrics Tracking (Completed)
+The system tracks the following for every request:
+- **Latency**: Captured in `core/router.py` (TTFB for streaming, total for non-streaming).
+- **Token Usage**: Extracted from responses in `core/router.py`.
 
-### 2. Dashboard Visualizations
-A new "Metrics" view should be added to the dashboard containing:
-- **Total Tokens Graph**: A chart showing the distribution of tokens sent and received per provider.
-- **Request Volume Graph**: A chart showing the number of requests routed to each provider.
-- **Latency Heatmap/Bar Chart**: A chart showing the average latency per provider.
+### 2. Dashboard Visualizations (Completed)
+Added a new "Metrics" view with:
+- **Total Tokens Graph**: Stacked bar chart in `static/app.js`.
+- **Request Volume Graph**: Pie chart in `static/app.js`.
+- **Latency Chart**: Bar chart showing average latency.
 
-### 3. Provider Dashboard Integration
-- The provider list/modal should display the **Average Latency** for that specific provider based on recent history.
+### 3. Provider Dashboard Integration (Completed)
+- Average latency displayed on provider cards in the dashboard.
 
 ## Data Definitions
 - **Latency**: Measured in milliseconds (ms).
