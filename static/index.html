@@ -21,6 +21,9 @@
                 <button class="nav-btn active" data-tab="providers">
                     <span class="nav-icon">⚙</span> Providers
                 </button>
+                <button class="nav-btn" data-tab="routing">
+                    <span class="nav-icon">⇄</span> Model Routing
+                </button>
                 <button class="nav-btn" data-tab="logs">
                     <span class="nav-icon">▤</span> Request Logs
                 </button>
@@ -51,6 +54,34 @@
 
                 <div class="grid-container" id="providers-list">
                     <!-- Providers will be injected dynamically -->
+                </div>
+            </section>
+
+            <!-- Tab: Model Routing -->
+            <section id="tab-routing" class="tab-pane">
+                <div class="section-header">
+                    <div>
+                        <h1>Model Routing</h1>
+                        <p class="subtitle">Map specific Model IDs to providers for targeted routing.</p>
+                    </div>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="openRoutingModal()">+ Add Mapping</button>
+                    </div>
+                </div>
+
+                <div class="routing-table-container glass-panel">
+                    <table class="routing-table">
+                        <thead>
+                            <tr>
+                                <th>Model ID</th>
+                                <th>Associated Provider</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="routing-mappings-list">
+                            <!-- Mappings will be injected dynamically -->
+                        </tbody>
+                    </table>
                 </div>
             </section>
 
@@ -161,8 +192,9 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label for="provider-model-name">Model ID/Name</label>
-                    <input type="text" id="provider-model-name" required placeholder="e.g. gpt-4o or claude-3-5-sonnet" class="form-control">
+                    <label for="provider-model-name">Routing Model ID</label>
+                    <input type="text" id="provider-model-name" required placeholder="e.g. my-custom-model-id" class="form-control">
+                    <p class="subtitle" style="font-size: 0.8rem; margin-top: 4px;">Agents specifying this model ID will be routed here. If not specified, the active global provider is used.</p>
                 </div>
                 <div class="form-group form-checkbox">
                     <input type="checkbox" id="provider-is-active">
@@ -171,6 +203,29 @@
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeProviderModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save Provider</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Model Routing Modal -->
+    <div class="modal-overlay" id="routing-modal">
+        <div class="modal-content glass-panel">
+            <h2>Add Model Routing</h2>
+            <form id="routing-form" onsubmit="handleRoutingSubmit(event)">
+                <div class="form-group">
+                    <label for="routing-model-id">Model ID</label>
+                    <input type="text" id="routing-model-id" required placeholder="e.g. agent-1-model" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label for="routing-provider-id">Assign to Provider</label>
+                    <select id="routing-provider-id" class="form-control" required>
+                        <!-- Providers will be loaded here -->
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeRoutingModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Mapping</button>
                 </div>
             </form>
         </div>

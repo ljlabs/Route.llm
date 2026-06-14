@@ -3,6 +3,7 @@ import json
 import time
 import database as db
 import translator as ts
+import httpx
 from core.providers.factory import ProviderFactory
 from core.providers.base import BaseProvider
 from core.providers.openai import OpenAIProvider
@@ -433,3 +434,88 @@ def test_database_logging_limits(tmp_path):
     )
     # Check that database has 0 logs now
     assert len(db.get_logs()) == 0
+
+# --- Unit Tests for Model Routing ---
+
+def test_model_mapping_db(tmp_path):
+    import os
+    db_file = os.path.join(tmp_path, "test_routing.db")
+    db.DB_PATH = db_file
+    db.init_db()
+
+    # Create two providers
+    db.add_provider("P1", "openai", "url1", "key1", "model1", is_active=0)
+    db.add_provider("P2", "openai", "url2", "key2", "model2", is_active=0)
+
+    providers = db.get_providers()
+    p1_id = providers[0]["id"]
+    p2_id = providers[1]["id"]
+
+    # Map a custom model ID to P1
+    db.add_model_mapping("custom-model-a", p1_id)
+    # Map another custom model ID to P1 (mix and match)
+    db.add_model_mapping("custom-model-b", p1_id)
+    # Map a third to P2
+    db.add_model_mapping("custom-model-c", p2_id)
+
+    mappings = db.get_model_mappings()
+    assert len(mappings) == 3
+
+    # Verify a specific mapping
+    mapping_a = next(m for m in mappings if m["model_id"] == "custom-model-a")
+    assert mapping_a["provider_id"] == p1_id
+    assert mapping_a["provider_name"] == "P1"
+
+def test_provider_service_model_lookup(tmp_path):
+    import os
+    db_file = os.path.join(tmp_path, "test_lookup.db")
+    db.DB_PATH = db_file
+    db.init_db()
+
+    db.add_provider("P1", "openai", "url1", "key1", "model1", is_active=0)
+    providers = db.get_providers()
+    p1_id = providers[0]["id"]
+    db.add_model_mapping("my-special-model", p1_id)
+
+    from core.providers.service import ProviderService
+    service = ProviderService()
+    provider = service.get_provider_by_model("my-special-model")
+
+    assert provider is not None
+    assert provider.name == "P1"
+
+    # Test non-existent model
+    assert service.get_provider_by_model("ghost-model") is None
+
+@pytest.mark.anyio
+async def test_router_routing_logic(tmp_path):
+    import os
+    db_file = os.path.join(tmp_path, "test_router.db")
+    db.DB_PATH = db_file
+    db.init_db()
+
+    # Setup providers
+    db.add_provider("GlobalProvider", "openai", "url-global", "key-global", "model-global", is_active=1)
+    db.add_provider("SpecialProvider", "openai", "url-special", "key-special", "model-special", is_active=0)
+
+    providers = db.get_providers()
+    global_p = next(p for p in providers if p["name"] == "GlobalProvider")
+    special_p = next(p for p in providers if p["name"] == "SpecialProvider")
+
+    # Map "special-model-id" to SpecialProvider
+    db.add_model_mapping("special-model-id", special_p["id"])
+
+    # Initialize RouterService
+    async with httpx.AsyncClient() as client:
+        from core.rate_limiter import RateLimiter
+        from core.router import RouterService
+        router = RouterService(http_client=client, rate_limiter=RateLimiter(100))
+
+        # Verify the provider selection logic used by the router
+        service = router.provider_service
+        assert service.get_provider_by_model("special-model-id").name == "SpecialProvider"
+
+        # Request with unmapped model ID -> should fall back to GlobalProvider (conceptually)
+        assert service.get_provider_by_model("unknown-model") is None
+        assert service.get_active_provider().name == "GlobalProvider"
+

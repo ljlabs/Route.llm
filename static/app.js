@@ -15,15 +15,17 @@ function initTabs() {
     navButtons.forEach(btn => {
         btn.addEventListener("click", () => {
             const tabId = btn.getAttribute("data-tab");
-            
+
             navButtons.forEach(b => b.classList.remove("active"));
             tabPanes.forEach(pane => pane.classList.remove("active"));
-            
+
             btn.classList.add("active");
             document.getElementById(`tab-${tabId}`).classList.add("active");
-            
+
             if (tabId === "logs") {
                 fetchLogs();
+            } else if (tabId === "routing") {
+                fetchRouting();
             }
         });
     });
@@ -427,4 +429,97 @@ function clearChat() {
             Hello! I am connected to the active proxy provider. Send a message to test the response.
         </div>
     `;
+}
+
+// Model Routing Management
+async function fetchRouting() {
+    try {
+        const res = await fetch("/api/routing");
+        const mappings = await res.json();
+        renderRouting(mappings);
+    } catch (err) {
+        console.error("Error fetching routing mappings:", err);
+    }
+}
+
+function renderRouting(mappings) {
+    const container = document.getElementById("routing-mappings-list");
+    container.innerHTML = "";
+
+    if (mappings.length === 0) {
+        container.innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--text-secondary); padding: 20px;">No custom routing mappings configured.</td></tr>`;
+        return;
+    }
+
+    mappings.forEach(m => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+            <td class="val-cell">${m.model_id}</td>
+            <td class="val-cell">${m.provider_name}</td>
+            <td class="action-cell">
+                <button class="btn btn-danger btn-sm" onclick="deleteRoutingMapping('${m.model_id}')">Delete</button>
+            </td>
+        `;
+        container.appendChild(row);
+    });
+}
+
+function openRoutingModal() {
+    const modal = document.getElementById("routing-modal");
+    const providerSelect = document.getElementById("routing-provider-id");
+
+    // Populate provider dropdown
+    fetch("/api/providers")
+        .then(res => res.json())
+        .then(providers => {
+            providerSelect.innerHTML = '<option value="" disabled selected>Select a provider</option>';
+            providers.forEach(p => {
+                const opt = document.createElement("option");
+                opt.value = p.id;
+                opt.innerText = p.name;
+                providerSelect.appendChild(opt);
+            });
+        });
+
+    modal.classList.add("open");
+}
+
+function closeRoutingModal() {
+    document.getElementById("routing-modal").classList.remove("open");
+}
+
+async function handleRoutingSubmit(event) {
+    event.preventDefault();
+
+    const mapping = {
+        model_id: document.getElementById("routing-model-id").value,
+        provider_id: parseInt(document.getElementById("routing-provider-id").value)
+    };
+
+    try {
+        const res = await fetch("/api/routing", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(mapping)
+        });
+        if (res.ok) {
+            closeRoutingModal();
+            fetchRouting();
+            document.getElementById("routing-form").reset();
+        }
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function deleteRoutingMapping(modelId) {
+    if (!confirm(`Are you sure you want to delete the routing for ${modelId}?`)) return;
+    try {
+        const res = await fetch(`/api/routing/${modelId}`, { method: "DELETE" });
+        if (res.ok) {
+            fetchRouting();
+        }
+    } catch (err) {
+        console.error(err);
+    }
 }

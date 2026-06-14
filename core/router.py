@@ -44,17 +44,26 @@ class RouterService:
     ) -> JSONResponse | StreamingResponse:
         """
         Route an Anthropic-format request to the active provider.
-        
+
         Args:
             anthropic_request: Request in Anthropic /v1/messages format
             stream: Whether to stream the response
-            
+
         Returns:
             JSONResponse or StreamingResponse
         """
-        # Get active provider
-        provider = self.provider_service.get_active_provider()
-        
+        # Extract model from request for model-based routing
+        model_name = anthropic_request.get("model")
+
+        # Try to get provider by model name first
+        provider = None
+        if model_name:
+            provider = self.provider_service.get_provider_by_model(model_name)
+
+        # If no provider found for the model, fall back to active provider
+        if not provider:
+            provider = self.provider_service.get_active_provider()
+
         if not provider:
             raise HTTPException(
                 status_code=400,
@@ -101,17 +110,26 @@ class RouterService:
     ) -> JSONResponse | StreamingResponse:
         """
         Route an OpenAI-format request to the active provider.
-        
+
         Args:
             openai_request: Request in OpenAI /v1/chat/completions format
             stream: Whether to stream the response
-            
+
         Returns:
             JSONResponse or StreamingResponse
         """
-        # Get active provider
-        provider = self.provider_service.get_active_provider()
-        
+        # Extract model from request for model-based routing
+        model_name = openai_request.get("model")
+
+        # Try to get provider by model name first
+        provider = None
+        if model_name:
+            provider = self.provider_service.get_provider_by_model(model_name)
+
+        # If no provider found for the model, fall back to active provider
+        if not provider:
+            provider = self.provider_service.get_active_provider()
+
         if not provider:
             raise HTTPException(
                 status_code=400,

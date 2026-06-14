@@ -60,15 +60,15 @@ class ProviderService:
     def get_provider_by_id(self, provider_id: int) -> Optional[BaseProvider]:
         """
         Get a provider by its ID.
-        
+
         Args:
             provider_id: Database ID of the provider
-            
+
         Returns:
             BaseProvider instance or None if not found
         """
         providers = db.get_providers()
-        
+
         for provider_config in providers:
             if provider_config.get("id") == provider_id:
                 try:
@@ -76,7 +76,28 @@ class ProviderService:
                 except Exception as e:
                     logger.error(f"Failed to create provider {provider_id}: {e}")
                     return None
-        
+
+        return None
+
+    def get_provider_by_model(self, model_name: str) -> Optional[BaseProvider]:
+        """
+        Get a provider based on the model mapping.
+
+        Args:
+            model_name: The model ID from the request
+
+        Returns:
+            BaseProvider instance if a mapping exists, None otherwise
+        """
+        conn = db.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT provider_id FROM model_mappings WHERE model_id = ?", (model_name,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            return self.get_provider_by_id(row["provider_id"])
+
         return None
     
     def get_all_providers(self) -> List[Dict[str, Any]]:

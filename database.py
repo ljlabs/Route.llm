@@ -34,7 +34,16 @@ def init_db():
             is_active INTEGER DEFAULT 0
         )
     """)
-    
+
+    # Create model mappings table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS model_mappings (
+            model_id TEXT PRIMARY KEY,
+            provider_id INTEGER NOT NULL,
+            FOREIGN KEY (provider_id) REFERENCES providers (id) ON DELETE CASCADE
+        )
+    """)
+
     # Create settings table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
@@ -128,6 +137,33 @@ def set_active_provider(provider_id):
     cursor = conn.cursor()
     cursor.execute("UPDATE providers SET is_active = 0")
     cursor.execute("UPDATE providers SET is_active = 1 WHERE id = ?", (provider_id,))
+    conn.commit()
+    conn.close()
+
+# Model Mapping operations
+def get_model_mappings():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT m.model_id, p.name as provider_name, p.id as provider_id
+        FROM model_mappings m
+        JOIN providers p ON m.provider_id = p.id
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def add_model_mapping(model_id, provider_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO model_mappings (model_id, provider_id) VALUES (?, ?)", (model_id, provider_id))
+    conn.commit()
+    conn.close()
+
+def delete_model_mapping(model_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM model_mappings WHERE model_id = ?", (model_id,))
     conn.commit()
     conn.close()
 
