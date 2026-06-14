@@ -549,6 +549,40 @@ async function deleteRoutingMapping(modelId) {
 // Metrics Charting Logic
 let metricsCharts = {};
 
+const CHART_COLORS = [
+    '#4f46e5', // Indigo
+    '#7c3aed', // Purple
+    '#2563eb', // Blue
+    '#db2777', // Pink
+    '#ea580c', // Orange
+    '#16a34a', // Green
+    '#0891b2', // Cyan
+    '#eab308', // Yellow
+    '#dc2626', // Red
+    '#4ade80', // Light Green
+    '#f472b6', // Light Pink
+    '#fb923c'  // Light Orange
+];
+
+function getProviderColor(name, opacity = 1) {
+    // Deterministic color selection based on name hash
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const index = Math.abs(hash) % CHART_COLORS.length;
+    const color = CHART_COLORS[index];
+    
+    if (opacity < 1) {
+        // Simple hex to rgba conversion
+        const r = parseInt(color.slice(1, 3), 16);
+        const g = parseInt(color.slice(3, 5), 16);
+        const b = parseInt(color.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+    }
+    return color;
+}
+
 async function updateMetricsCharts() {
     try {
         const [summaryRes, historyRes] = await Promise.all([
@@ -598,14 +632,14 @@ function renderMetricsCharts(summaryData, historyData) {
     
     // Group history by provider
     const providers = [...new Set(historyData.map(h => h.provider_name))];
-    const datasets = providers.map((p, i) => {
-        const colors = ['#4f46e5', '#7c3aed', '#2563eb', '#db2777', '#ea580c', '#16a34a'];
+    const datasets = providers.map((p) => {
         const providerData = historyData.filter(h => h.provider_name === p);
+        const color = getProviderColor(p);
         return {
             label: p,
             data: providerData.map(h => ({ x: new Date(h.timestamp).getTime(), y: h.latency_ms })),
-            borderColor: colors[i % colors.length],
-            backgroundColor: colors[i % colors.length] + '20',
+            borderColor: color,
+            backgroundColor: getProviderColor(p, 0.1),
             borderWidth: 2,
             tension: 0.3,
             pointRadius: 2,
@@ -644,7 +678,7 @@ function renderMetricsCharts(summaryData, historyData) {
             labels: labels,
             datasets: [{
                 data: requestCounts,
-                backgroundColor: ['#4f46e5', '#7c3aed', '#2563eb', '#db2777', '#ea580c', '#16a34a'],
+                backgroundColor: labels.map(name => getProviderColor(name)),
                 borderWidth: 0
             }]
         },
@@ -696,10 +730,16 @@ function renderMetricsCharts(summaryData, historyData) {
             datasets: [{
                 label: 'Latency (ms)',
                 data: avgLatencies,
-                backgroundColor: '#2563eb',
+                backgroundColor: labels.map(name => getProviderColor(name)),
                 borderRadius: 4
             }]
         },
-        options: commonOptions
+        options: {
+            ...commonOptions,
+            plugins: {
+                ...commonOptions.plugins,
+                legend: { display: false } // Hide legend for single-dataset bar chart
+            }
+        }
     });
 }
