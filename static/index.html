@@ -148,17 +148,29 @@
                 </div>
 
                 <div class="metrics-grid">
+                    <div class="metrics-card glass-panel metrics-card-full">
+                        <h3>Latency Over Time (ms)</h3>
+                        <div class="chart-container-inner">
+                            <canvas id="chart-latency-history"></canvas>
+                        </div>
+                    </div>
                     <div class="metrics-card glass-panel">
                         <h3>Request Volume</h3>
-                        <canvas id="chart-requests"></canvas>
+                        <div class="chart-container-inner">
+                            <canvas id="chart-requests"></canvas>
+                        </div>
                     </div>
                     <div class="metrics-card glass-panel">
                         <h3>Token Usage</h3>
-                        <canvas id="chart-tokens"></canvas>
+                        <div class="chart-container-inner">
+                            <canvas id="chart-tokens"></canvas>
+                        </div>
                     </div>
                     <div class="metrics-card glass-panel">
                         <h3>Average Latency (ms)</h3>
-                        <canvas id="chart-latency"></canvas>
+                        <div class="chart-container-inner">
+                            <canvas id="chart-latency"></canvas>
+                        </div>
                     </div>
                 </div>
             </section>

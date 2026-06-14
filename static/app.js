@@ -551,20 +551,26 @@ let metricsCharts = {};
 
 async function updateMetricsCharts() {
     try {
-        const res = await fetch("/api/metrics");
-        const data = await res.json();
-        renderMetricsCharts(data);
+        const [summaryRes, historyRes] = await Promise.all([
+            fetch("/api/metrics"),
+            fetch("/api/metrics/history")
+        ]);
+        
+        const summaryData = await summaryRes.json();
+        const historyData = await historyRes.json();
+        
+        renderMetricsCharts(summaryData, historyData);
     } catch (err) {
         console.error("Error updating metrics charts:", err);
     }
 }
 
-function renderMetricsCharts(data) {
-    const labels = data.map(m => m.provider_name);
-    const requestCounts = data.map(m => m.request_count);
-    const tokensSent = data.map(m => m.total_tokens_sent);
-    const tokensReceived = data.map(m => m.total_tokens_received);
-    const avgLatencies = data.map(m => m.avg_latency);
+function renderMetricsCharts(summaryData, historyData) {
+    const labels = summaryData.map(m => m.provider_name);
+    const requestCounts = summaryData.map(m => m.request_count);
+    const tokensSent = summaryData.map(m => m.total_tokens_sent);
+    const tokensReceived = summaryData.map(m => m.total_tokens_received);
+    const avgLatencies = summaryData.map(m => m.avg_latency);
 
     const commonOptions = {
         responsive: true,
@@ -586,6 +592,49 @@ function renderMetricsCharts(data) {
             }
         }
     };
+
+    // Latency History (Line Chart)
+    if (metricsCharts.history) metricsCharts.history.destroy();
+    
+    // Group history by provider
+    const providers = [...new Set(historyData.map(h => h.provider_name))];
+    const datasets = providers.map((p, i) => {
+        const colors = ['#4f46e5', '#7c3aed', '#2563eb', '#db2777', '#ea580c', '#16a34a'];
+        const providerData = historyData.filter(h => h.provider_name === p);
+        return {
+            label: p,
+            data: providerData.map(h => ({ x: new Date(h.timestamp).getTime(), y: h.latency_ms })),
+            borderColor: colors[i % colors.length],
+            backgroundColor: colors[i % colors.length] + '20',
+            borderWidth: 2,
+            tension: 0.3,
+            pointRadius: 2,
+            fill: false
+        };
+    });
+
+    metricsCharts.history = new Chart(document.getElementById("chart-latency-history"), {
+        type: 'line',
+        data: { datasets },
+        options: {
+            ...commonOptions,
+            scales: {
+                ...commonOptions.scales,
+                x: {
+                    type: 'linear',
+                    grid: { display: false },
+                    ticks: {
+                        color: '#a0a0a0',
+                        maxRotation: 0,
+                        callback: function(val) {
+                            const date = new Date(val);
+                            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     // Request Volume Chart
     if (metricsCharts.requests) metricsCharts.requests.destroy();
