@@ -102,7 +102,7 @@ function renderProviders(providers) {
             </div>
             <div class="card-details">
                 <div><span>Endpoint:</span> <span class="val">${p.endpoint_url}</span></div>
-                <div><span>Model:</span> <span class="val">${p.model_name}</span></div>
+                <div><span>Routing ID:</span> <span class="val">${p.model_name}</span></div>
                 <div><span>API Key:</span> <span class="val">••••••••</span></div>
             </div>
             <div class="card-actions">
@@ -418,15 +418,6 @@ function handleChatKey(event) {
     if (event.key === "Enter") {
         sendChatMessage();
     }
-}
-
-function clearChat() {
-    const chatContainer = document.getElementById("chat-messages");
-    chatContainer.innerHTML = `
-        <div class="chat-message assistant">
-            Hello! I am connected to the active proxy provider. Send a message to test the response.
-        </div>
-    `;
 }
 
 function clearChat() {

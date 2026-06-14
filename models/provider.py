@@ -45,7 +45,7 @@ class ProviderResponse(BaseModel):
     name: str
     api_type: str
     endpoint_url: str
-    # Note: api_key is intentionally excluded from responses for security
+    api_key: str
     model_name: str
     is_active: bool
     
