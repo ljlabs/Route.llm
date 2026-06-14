@@ -13,8 +13,8 @@ from ..translation.stream_base import AnthropicToOpenAIStreamTranslator, Passthr
 class OpenAIProvider(BaseProvider):
     """Provider for OpenAI-compatible APIs (OpenAI, OpenRouter, etc.)"""
     
-    def __init__(self, **kwargs):
-        super().__init__(api_type="openai", **kwargs)
+    def __init__(self, api_type: str = "openai", **kwargs):
+        super().__init__(api_type=api_type, **kwargs)
     
     def wrap_request(self, anthropic_request: Dict[str, Any]) -> Dict[str, Any]:
         """Convert Anthropic request to OpenAI format with sanitization."""

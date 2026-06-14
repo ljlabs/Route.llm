@@ -3,6 +3,93 @@ import json
 import time
 import database as db
 import translator as ts
+from core.providers.factory import ProviderFactory
+from core.providers.base import BaseProvider
+from core.providers.openai import OpenAIProvider
+from core.providers.anthropic import AnthropicProvider
+from core.providers.gemini import GeminiProvider
+from core.providers.mistral import MistralProvider
+from core.providers.openrouter import OpenRouterProvider
+
+# --- Unit Tests for Providers ---
+
+def test_provider_factory_instantiation():
+    factory = ProviderFactory()
+    
+    # Test OpenAI instantiation
+    openai_config = {
+        "name": "Test OpenAI",
+        "api_type": "openai",
+        "endpoint_url": "https://api.openai.com/v1/chat/completions",
+        "api_key": "sk-test",
+        "model_name": "gpt-4o",
+        "is_active": 1,
+        "id": 1
+    }
+    provider = factory.create_provider(openai_config)
+    assert isinstance(provider, OpenAIProvider)
+    assert provider.name == "Test OpenAI"
+    assert provider.api_type == "openai"
+    
+    # Test Anthropic instantiation
+    anthropic_config = {
+        "name": "Test Anthropic",
+        "api_type": "anthropic",
+        "endpoint_url": "https://api.anthropic.com/v1/messages",
+        "api_key": "sk-ant-test",
+        "model_name": "claude-3-5-sonnet",
+        "is_active": 0,
+        "id": 2
+    }
+    provider = factory.create_provider(anthropic_config)
+    assert isinstance(provider, AnthropicProvider)
+    assert provider.name == "Test Anthropic"
+    assert provider.api_type == "anthropic"
+    
+    # Test Gemini instantiation
+    gemini_config = {
+        "name": "Test Gemini",
+        "api_type": "gemini",
+        "endpoint_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "api_key": "ai-test",
+        "model_name": "gemini-1.5-pro",
+        "is_active": 0,
+        "id": 3
+    }
+    provider = factory.create_provider(gemini_config)
+    assert isinstance(provider, GeminiProvider)
+    assert provider.name == "Test Gemini"
+    assert provider.api_type == "gemini"
+    
+    # Test Mistral instantiation
+    mistral_config = {
+        "name": "Test Mistral",
+        "api_type": "mistral",
+        "endpoint_url": "https://api.mistral.ai/v1/chat/completions",
+        "api_key": "mistral-test",
+        "model_name": "mistral-large-latest",
+        "is_active": 0,
+        "id": 4
+    }
+    provider = factory.create_provider(mistral_config)
+    assert isinstance(provider, MistralProvider)
+    assert provider.name == "Test Mistral"
+    assert provider.api_type == "mistral"
+    
+    # Test OpenRouter instantiation
+    openrouter_config = {
+        "name": "Test OpenRouter",
+        "api_type": "openrouter",
+        "endpoint_url": "https://openrouter.ai/api/v1/chat/completions",
+        "api_key": "sk-or-test",
+        "model_name": "meta-llama/llama-3-70b",
+        "is_active": 0,
+        "id": 5
+    }
+    provider = factory.create_provider(openrouter_config)
+    assert isinstance(provider, OpenRouterProvider)
+    assert provider.name == "Test OpenRouter"
+    assert provider.api_type == "openrouter"
 
 # --- Unit Tests for Translator ---
 
