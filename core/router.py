@@ -69,10 +69,10 @@ class RouterService:
                 status_code=400,
                 detail="No active provider configured"
             )
-        
-        # Apply rate limiting
-        await self.rate_limiter.wait()
-        
+
+        # Apply rate limiting (use provider-specific limit if set, else global)
+        await self.rate_limiter.wait(tps_override=provider.rate_limit_tps)
+
         # Wrap request to provider format
         wrapped_request = provider.wrap_request(anthropic_request)
         

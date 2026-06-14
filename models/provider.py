@@ -17,6 +17,7 @@ class ProviderConfig(BaseModel):
     api_key: str = Field(..., description="API key for authentication")
     model_name: str = Field(..., description="Model identifier")
     is_active: bool = Field(default=False, description="Whether this is the active provider")
+    rate_limit_tps: Optional[float] = Field(default=None, description="Provider-specific rate limit in TPS")
 
 
 class ProviderCreate(BaseModel):
@@ -27,6 +28,7 @@ class ProviderCreate(BaseModel):
     api_key: str = Field(..., description="API key")
     model_name: str = Field(..., description="Model name")
     is_active: bool = Field(default=False, description="Set as active provider")
+    rate_limit_tps: Optional[float] = Field(default=None, description="Provider-specific rate limit in TPS")
 
 
 class ProviderUpdate(BaseModel):
@@ -37,6 +39,7 @@ class ProviderUpdate(BaseModel):
     api_key: Optional[str] = None
     model_name: Optional[str] = None
     is_active: Optional[bool] = None
+    rate_limit_tps: Optional[float] = None
 
 
 class ProviderResponse(BaseModel):
@@ -45,9 +48,10 @@ class ProviderResponse(BaseModel):
     name: str
     api_type: str
     endpoint_url: str
-    api_key: str
+    # Note: api_key is intentionally excluded from responses for security
     model_name: str
     is_active: bool
+    rate_limit_tps: Optional[float] = None
     
     class Config:
         from_attributes = True

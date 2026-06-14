@@ -94,6 +94,11 @@ function renderProviders(providers) {
     providers.forEach(p => {
         const card = document.createElement("div");
         card.className = `provider-card glass-panel ${p.is_active ? 'active-card' : ''}`;
+
+        const rateLimitText = p.rate_limit_tps
+            ? `${p.rate_limit_tps} TPS`
+            : 'Global';
+
         card.innerHTML = `
             <div class="card-header">
                 <div>
@@ -105,6 +110,7 @@ function renderProviders(providers) {
             <div class="card-details">
                 <div><span>Endpoint:</span> <span class="val">${p.endpoint_url}</span></div>
                 <div><span>Routing ID:</span> <span class="val">${p.model_name}</span></div>
+                <div><span>Rate Limit:</span> <span class="val">${rateLimitText}</span></div>
                 <div><span>API Key:</span> <span class="val">••••••••</span></div>
             </div>
             <div class="card-actions">
@@ -161,6 +167,7 @@ function openProviderModal(provider = null) {
         document.getElementById("provider-endpoint-url").value = provider.endpoint_url;
         document.getElementById("provider-api-key").value = provider.api_key;
         document.getElementById("provider-model-name").value = provider.model_name;
+        document.getElementById("provider-rate-limit").value = provider.rate_limit_tps || "";
         document.getElementById("provider-is-active").checked = provider.is_active === 1;
     } else if (provider) {
         title.innerText = "Add Provider";
@@ -170,6 +177,7 @@ function openProviderModal(provider = null) {
         document.getElementById("provider-endpoint-url").value = provider.endpoint_url;
         document.getElementById("provider-api-key").value = provider.api_key;
         document.getElementById("provider-model-name").value = provider.model_name;
+        document.getElementById("provider-rate-limit").value = provider.rate_limit_tps || "";
         document.getElementById("provider-is-active").checked = false;
     } else {
         title.innerText = "Add Provider";
@@ -200,6 +208,7 @@ async function handleProviderSubmit(event) {
         endpoint_url: document.getElementById("provider-endpoint-url").value,
         api_key: document.getElementById("provider-api-key").value,
         model_name: document.getElementById("provider-model-name").value,
+        rate_limit_tps: parseFloat(document.getElementById("provider-rate-limit").value) || null,
         is_active: document.getElementById("provider-is-active").checked ? 1 : 0
     };
     

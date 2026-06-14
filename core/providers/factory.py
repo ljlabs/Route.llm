@@ -65,6 +65,7 @@ class ProviderFactory:
             "model_name": config.get("model_name", ""),
             "is_active": bool(config.get("is_active", 0)),
             "provider_id": config.get("id"),
+            "rate_limit_tps": config.get("rate_limit_tps"),
         }
         
         logger.debug(f"Creating {api_type} provider: {provider_config['name']}")

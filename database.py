@@ -31,9 +31,17 @@ def init_db():
             endpoint_url TEXT NOT NULL,
             api_key TEXT NOT NULL,
             model_name TEXT NOT NULL,
-            is_active INTEGER DEFAULT 0
+            is_active INTEGER DEFAULT 0,
+            rate_limit_tps REAL
         )
     """)
+
+    # Migration: Add rate_limit_tps if it doesn't exist (for existing databases)
+    try:
+        cursor.execute("ALTER TABLE providers ADD COLUMN rate_limit_tps REAL")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
 
     # Create model mappings table
     cursor.execute("""
@@ -90,28 +98,28 @@ def get_active_provider():
     conn.close()
     return dict(row) if row else None
 
-def add_provider(name, api_type, endpoint_url, api_key, model_name, is_active=0):
+def add_provider(name, api_type, endpoint_url, api_key, model_name, is_active=0, rate_limit_tps=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     if is_active == 1:
         cursor.execute("UPDATE providers SET is_active = 0")
     cursor.execute("""
-        INSERT INTO providers (name, api_type, endpoint_url, api_key, model_name, is_active)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (name, api_type, endpoint_url, api_key, model_name, is_active))
+        INSERT INTO providers (name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps))
     conn.commit()
     conn.close()
 
-def update_provider(provider_id, name, api_type, endpoint_url, api_key, model_name, is_active):
+def update_provider(provider_id, name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     if is_active == 1:
         cursor.execute("UPDATE providers SET is_active = 0 WHERE id != ?", (provider_id,))
     cursor.execute("""
         UPDATE providers
-        SET name = ?, api_type = ?, endpoint_url = ?, api_key = ?, model_name = ?, is_active = ?
+        SET name = ?, api_type = ?, endpoint_url = ?, api_key = ?, model_name = ?, is_active = ?, rate_limit_tps = ?
         WHERE id = ?
-    """, (name, api_type, endpoint_url, api_key, model_name, is_active, provider_id))
+    """, (name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps, provider_id))
     conn.commit()
     conn.close()
 

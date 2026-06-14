@@ -196,6 +196,11 @@
                     <input type="text" id="provider-model-name" required placeholder="e.g. my-custom-model-id" class="form-control">
                     <p class="subtitle" style="font-size: 0.8rem; margin-top: 4px;">Agents specifying this model ID will be routed here. If not specified, the active global provider is used.</p>
                 </div>
+                <div class="form-group">
+                    <label for="provider-rate-limit">Preferred Rate Limit (TPS)</label>
+                    <input type="number" id="provider-rate-limit" step="0.01" placeholder="Use global limit" class="form-control">
+                    <p class="subtitle" style="font-size: 0.8rem; margin-top: 4px;">Optional: Override global rate limit for this provider.</p>
+                </div>
                 <div class="form-group form-checkbox">
                     <input type="checkbox" id="provider-is-active">
                     <label for="provider-is-active">Make Active Provider</label>

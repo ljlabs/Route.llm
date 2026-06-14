@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class BaseProvider(ABC):
     """Abstract base class for all LLM providers."""
-    
+
     def __init__(
         self,
         name: str,
@@ -23,7 +23,8 @@ class BaseProvider(ABC):
         model_name: str,
         api_type: str,
         is_active: bool = False,
-        provider_id: Optional[int] = None
+        provider_id: Optional[int] = None,
+        rate_limit_tps: Optional[float] = None
     ):
         self.name = name
         self.endpoint_url = endpoint_url
@@ -32,6 +33,7 @@ class BaseProvider(ABC):
         self.api_type = api_type
         self.is_active = is_active
         self.provider_id = provider_id
+        self.rate_limit_tps = rate_limit_tps
     
     @abstractmethod
     def wrap_request(self, anthropic_request: Dict[str, Any]) -> Dict[str, Any]:

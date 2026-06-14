@@ -42,18 +42,26 @@ class RateLimiter:
         self.interval = 1.0 / tps if tps > 0 else 0
         logger.info(f"Rate limiter set to {tps} TPS")
     
-    async def wait(self):
-        """Wait if necessary to maintain the rate limit."""
-        if self.tps <= 0:
+    async def wait(self, tps_override: float = None):
+        """Wait if necessary to maintain the rate limit.
+
+        Args:
+            tps_override: Optional override for the rate limit (TPS).
+        """
+        effective_tps = tps_override if tps_override is not None else self.tps
+
+        if effective_tps <= 0:
             return
-        
+
+        interval = 1.0 / effective_tps
+
         async with self.lock:
             now = time.time()
             elapsed = now - self.last_request_time
-            
-            if elapsed < self.interval:
-                wait_time = self.interval - elapsed
-                logger.debug(f"Rate limiting: waiting {wait_time:.3f}s")
+
+            if elapsed < interval:
+                wait_time = interval - elapsed
+                logger.debug(f"Rate limiting: waiting {wait_time:.3f}s (TPS: {effective_tps})")
                 await asyncio.sleep(wait_time)
                 self.last_request_time = time.time()
             else:
