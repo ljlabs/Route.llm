@@ -2,10 +2,60 @@
 
 document.addEventListener("DOMContentLoaded", () => {
     initTabs();
+    initMobileDrawer();
     fetchProviders();
     fetchSettings();
     fetchLogs();
 });
+
+// Mobile Drawer Navigation
+function initMobileDrawer() {
+    const toggle = document.getElementById("mobile-nav-toggle");
+    const sidebar = document.getElementById("sidebar");
+    const overlay = document.getElementById("sidebar-overlay");
+
+    function openDrawer() {
+        toggle.classList.add("open");
+        toggle.setAttribute("aria-expanded", "true");
+        sidebar.classList.add("drawer-open");
+        overlay.classList.add("visible");
+        overlay.setAttribute("aria-hidden", "false");
+    }
+
+    function closeDrawer() {
+        toggle.classList.remove("open");
+        toggle.setAttribute("aria-expanded", "false");
+        sidebar.classList.remove("drawer-open");
+        overlay.classList.remove("visible");
+        overlay.setAttribute("aria-hidden", "true");
+    }
+
+    toggle.addEventListener("click", () => {
+        if (sidebar.classList.contains("drawer-open")) {
+            closeDrawer();
+        } else {
+            openDrawer();
+        }
+    });
+
+    overlay.addEventListener("click", closeDrawer);
+
+    // Close drawer on Escape
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && sidebar.classList.contains("drawer-open")) {
+            closeDrawer();
+        }
+    });
+
+    // Auto-close drawer on tab switch (mobile convenience)
+    document.querySelectorAll(".nav-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            if (window.innerWidth <= 768) {
+                closeDrawer();
+            }
+        });
+    });
+}
 
 // Tab Navigation Logic
 function initTabs() {
@@ -349,10 +399,10 @@ function showLogDetail(index, element) {
     // Remove active class from previous
     document.querySelectorAll(".log-entry").forEach(el => el.classList.remove("active-entry"));
     element.classList.add("active-entry");
-    
+
     const log = allLogs[index];
     const detailPane = document.getElementById("log-detail");
-    
+
     // Pretty print json helper
     const formatJSON = (val) => {
         try {
@@ -361,29 +411,70 @@ function showLogDetail(index, element) {
             return val;
         }
     };
-    
-    detailPane.innerHTML = `
-        <h3>Log Inspector</h3>
-        <div class="log-detail-content" style="margin-top: 16px;">
-            <div class="detail-section">
-                <h4>General Details</h4>
-                <div class="card-details">
-                    <div><span>Timestamp:</span> <span class="val">${new Date(log.timestamp).toLocaleString()}</span></div>
-                    <div><span>Provider:</span> <span class="val">${log.provider_name}</span></div>
-                    <div><span>Method / Path:</span> <span class="val">${log.request_method} ${log.request_path}</span></div>
-                    <div><span>Status Code:</span> <span class="val">${log.response_status}</span></div>
-                </div>
-            </div>
-            <div class="detail-section">
-                <h4>Request Body</h4>
-                <pre>${formatJSON(log.request_body)}</pre>
-            </div>
-            <div class="detail-section">
-                <h4>Response Body</h4>
-                <pre>${formatJSON(log.response_body)}</pre>
-            </div>
-        </div>
-    `;
+
+    // Helper to create a collapsible pre block
+    const collapsiblePre = (content) => {
+        const wrapper = document.createElement("div");
+        const pre = document.createElement("pre");
+        pre.textContent = content;
+        wrapper.appendChild(pre);
+
+        // Check if content is long enough to warrant a toggle
+        const lineCount = content.split("\n").length;
+        if (lineCount > 10 || content.length > 500) {
+            pre.style.maxHeight = "150px";
+            const toggle = document.createElement("button");
+            toggle.className = "log-pre-toggle";
+            toggle.textContent = "Show more";
+            toggle.addEventListener("click", () => {
+                if (pre.style.maxHeight !== "none") {
+                    pre.style.maxHeight = "none";
+                    toggle.textContent = "Show less";
+                } else {
+                    pre.style.maxHeight = "150px";
+                    toggle.textContent = "Show more";
+                    pre.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                }
+            });
+            wrapper.appendChild(toggle);
+        }
+
+        return wrapper;
+    };
+
+    // Build detail content
+    const contentDiv = document.createElement("div");
+    contentDiv.className = "log-detail-content";
+    contentDiv.style.marginTop = "16px";
+
+    // General Details
+    const generalSection = document.createElement("div");
+    generalSection.className = "detail-section";
+    generalSection.innerHTML = `<h4>General Details</h4>
+        <div class="card-details">
+            <div><span>Timestamp:</span> <span class="val">${new Date(log.timestamp).toLocaleString()}</span></div>
+            <div><span>Provider:</span> <span class="val">${log.provider_name}</span></div>
+            <div><span>Method / Path:</span> <span class="val">${log.request_method} ${log.request_path}</span></div>
+            <div><span>Status Code:</span> <span class="val">${log.response_status}</span></div>
+        </div>`;
+    contentDiv.appendChild(generalSection);
+
+    // Request Body
+    const reqSection = document.createElement("div");
+    reqSection.className = "detail-section";
+    reqSection.innerHTML = `<h4>Request Body</h4>`;
+    reqSection.appendChild(collapsiblePre(formatJSON(log.request_body)));
+    contentDiv.appendChild(reqSection);
+
+    // Response Body
+    const resSection = document.createElement("div");
+    resSection.className = "detail-section";
+    resSection.innerHTML = `<h4>Response Body</h4>`;
+    resSection.appendChild(collapsiblePre(formatJSON(log.response_body)));
+    contentDiv.appendChild(resSection);
+
+    detailPane.innerHTML = `<h3>Log Inspector</h3>`;
+    detailPane.appendChild(contentDiv);
 }
 
 async function clearLogs() {
@@ -433,6 +524,28 @@ function appendChatMessage(text, sender) {
     const msg = document.createElement("div");
     msg.className = `chat-message ${sender}`;
     msg.innerText = text;
+
+    // For assistant messages, check if long enough to collapse
+    if (sender === "assistant" && text.length > 300) {
+        msg.classList.add("collapsed");
+        const expandBtn = document.createElement("button");
+        expandBtn.className = "chat-expand-btn";
+        expandBtn.textContent = "Show more";
+        expandBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (msg.classList.contains("collapsed")) {
+                msg.classList.remove("collapsed");
+                expandBtn.textContent = "Show less";
+            } else {
+                msg.classList.add("collapsed");
+                expandBtn.textContent = "Show more";
+                // Scroll back to message top so it's visible after collapse
+                msg.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+        });
+        msg.appendChild(expandBtn);
+    }
+
     chatContainer.appendChild(msg);
     chatContainer.scrollTop = chatContainer.scrollHeight;
     return msg;
