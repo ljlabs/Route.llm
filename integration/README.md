@@ -49,6 +49,10 @@ python integration/load_test.py --proxy-url http://127.0.0.1:8000 --requests 20 
 | `--requests` | 0 | Total requests to send (simple mode) |
 | `--tps` | 0 | Target TPS limit to verify (simple mode) |
 | `--concurrency` | 10 | Max concurrent connections |
+| `--model` | None | Model name to send in requests |
+| `--setup-provider` | None | Add provider: `NAME ENDPOINT_URL RATE_TPS MODEL` (repeatable) |
+| `--setup-global-tps` | 0 | Global TPS limit when using --setup-provider |
+| `--setup-mapping` | None | Map `MODEL_ID PROVIDER_NAME` (repeatable) |
 | `--ramp-step` | 1.0 | TPS increase per ramp interval (ramp mode) |
 | `--ramp-interval` | 2.0 | Seconds between ramp steps (ramp mode) |
 | `--hold-duration` | 60 | Seconds to hold steady state (ramp mode) |
@@ -78,10 +82,20 @@ python integration/load_test.py --proxy-url http://127.0.0.1:8000 --requests 20 
 ## Examples
 
 ```bash
-# Verify 5 TPS limit with 20 requests
+# Simple: 20 requests, 10 concurrent, verify 5 TPS
 python integration/load_test.py --requests 20 --concurrency 10 --tps 5
 
-# Find the actual limit by ramping to 20 TPS
+# Model-specific: send requests with a specific model name
+python integration/load_test.py --requests 20 --concurrency 10 --tps 2 --model my-model
+
+# Model routing: set up providers with per-provider rate limits
+python integration/load_test.py --requests 20 --concurrency 10 --tps 1 --model model-a \
+  --setup-provider DefaultProvider http://127.0.0.1:9001/v1/chat/completions 0 mock-model \
+  --setup-provider ModelAProvider http://127.0.0.1:9001/v1/chat/completions 1 mock-model \
+  --setup-mapping model-a ModelAProvider \
+  --setup-global-tps 2
+
+# Ramp mode: find the actual limit
 python integration/load_test.py --max-tps 20 --hold-duration 30
 
 # Full integration: configure proxy + run ramp test

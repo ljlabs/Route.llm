@@ -5,7 +5,7 @@ Manage application settings like rate limiting and log retention.
 """
 
 from fastapi import APIRouter, HTTPException, Request
-from core.rate_limiter import get_rate_limiter
+from core.rate_limiter import get_rate_limiter, get_per_provider_limiter
 from models.request import SettingsRequest
 from models.provider import SettingsResponse
 import database as db
@@ -42,9 +42,11 @@ async def set_settings(settings: SettingsRequest):
         if settings.rate_limit_tps is not None:
             db.set_rate_limit_tps(settings.rate_limit_tps)
 
-            # Update the global rate limiter
+            # Update both the global rate limiter and per-provider global rate
             rate_limiter = get_rate_limiter()
             rate_limiter.set_rate(settings.rate_limit_tps)
+            per_provider = get_per_provider_limiter()
+            per_provider.set_global_rate(settings.rate_limit_tps)
             logger.info(f"Rate limit updated to {settings.rate_limit_tps} TPS")
 
         return {"status": "success", "message": "Settings updated"}

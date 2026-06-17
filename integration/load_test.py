@@ -3,10 +3,13 @@ Load Test Engine
 
 Gradually ramps TPS to the proxy, detects steady state, holds for a configured duration,
 and generates a self-contained HTML report in output/.
+
+Supports model-specific and model-routing load tests.
 """
 
 import asyncio
 import aiohttp
+import httpx
 import json
 import time
 import os
@@ -18,6 +21,7 @@ from typing import List, Optional
 from tqdm import tqdm
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+PROXY_API = "http://127.0.0.1:8000"
 
 
 @dataclass
@@ -62,9 +66,74 @@ class SecondMetrics:
         return round(sorted_lat[idx], 2)
 
 
-async def send_request(session: aiohttp.ClientSession, url: str, idx: int) -> RequestResult:
+async def setup_proxy_providers(
+    proxy_url: str,
+    providers: list[dict],
+    model_mappings: list[dict] = None,
+    global_tps: float = 0,
+):
+    """
+    Configure proxy with providers and model mappings.
+
+    providers: list of dicts with keys: name, api_type, endpoint_url, api_key, model_name, rate_limit_tps
+    model_mappings: list of dicts with keys: model_id, provider_name
+    """
+    api_base = proxy_url.rstrip("/").rsplit("/v1", 1)[0]
+    async with httpx.AsyncClient() as client:
+        # Set global TPS
+        await client.post(f"{api_base}/api/settings", json={"rate_limit_tps": global_tps})
+
+        created = {}
+        for p in providers:
+            resp = await client.post(f"{api_base}/api/providers", json={
+                "name": p["name"],
+                "api_type": p.get("api_type", "openai"),
+                "endpoint_url": p["endpoint_url"],
+                "api_key": p.get("api_key", "sk-mock"),
+                "model_name": p.get("model_name", "mock-model"),
+                "is_active": p.get("is_active", False),
+                "rate_limit_tps": p.get("rate_limit_tps"),
+            })
+            if resp.status_code == 200:
+                # Get the created provider's ID
+                providers_resp = (await client.get(f"{api_base}/api/providers")).json()
+                found = next((x for x in providers_resp if x["name"] == p["name"]), None)
+                if found:
+                    created[p["name"]] = found["id"]
+                    if p.get("is_active"):
+                        await client.post(f"{api_base}/api/providers/{found['id']}/active")
+                print(f"  Provider: {p['name']} (id={created.get(p['name'], '?')})")
+            else:
+                # Might already exist, fetch existing
+                providers_resp = (await client.get(f"{api_base}/api/providers")).json()
+                found = next((x for x in providers_resp if x["name"] == p["name"]), None)
+                if found:
+                    created[p["name"]] = found["id"]
+                    if p.get("is_active"):
+                        await client.post(f"{api_base}/api/providers/{found['id']}/active")
+                    print(f"  Provider (existing): {p['name']} (id={found['id']})")
+
+        # Set up model mappings
+        if model_mappings:
+            for m in model_mappings:
+                provider_name = m["provider_name"]
+                provider_id = created.get(provider_name)
+                if provider_id:
+                    resp = await client.post(f"{api_base}/api/routing", json={
+                        "model_id": m["model_id"],
+                        "provider_id": provider_id,
+                    })
+                    status = "ok" if resp.status_code == 200 else f"err={resp.status_code}"
+                    print(f"  Mapping: {m['model_id']} -> {provider_name} ({status})")
+                else:
+                    print(f"  Mapping skipped: {m['model_id']} -> {provider_name} (provider not found)")
+
+    return created
+
+
+async def send_request(session: aiohttp.ClientSession, url: str, idx: int, model: str = None) -> RequestResult:
     payload = {
-        "model": "mock-model",
+        "model": model or "mock-model",
         "max_tokens": 50,
         "messages": [{"role": "user", "content": "Say hello"}],
     }
@@ -339,6 +408,7 @@ class LoadTester:
         concurrency: int = 50,
         num_requests: int = 0,
         target_tps: float = 0,
+        model: str = None,
     ):
         self.proxy_url = proxy_url.rstrip("/") + "/v1/messages"
         self.ramp_step = ramp_step
@@ -348,6 +418,7 @@ class LoadTester:
         self.concurrency = concurrency
         self.num_requests = num_requests
         self.target_tps = target_tps
+        self.model = model
 
         self.request_results: List[RequestResult] = []
         self.metrics_history: List[SecondMetrics] = []
@@ -379,7 +450,7 @@ class LoadTester:
             async def bounded_send(idx):
                 nonlocal completed, failed
                 async with semaphore:
-                    result = await send_request(session, self.proxy_url, idx)
+                    result = await send_request(session, self.proxy_url, idx, model=self.model)
                 elapsed = time.perf_counter() - wall_start
                 cur_tps = (completed + 1) / elapsed if elapsed > 0 else 0
                 completed += 1
@@ -413,6 +484,7 @@ class LoadTester:
             "concurrency": self.concurrency,
             "target_tps": self.target_tps,
             "proxy_url": self.proxy_url,
+            "model": self.model,
         }
         # Build per-second metrics for the report
         self._build_simple_metrics(wall_elapsed)
@@ -525,7 +597,7 @@ class LoadTester:
                     async def _guarded():
                         async with semaphore:
                             self._req_idx += 1
-                            return await send_request(session, self.proxy_url, self._req_idx)
+                            return await send_request(session, self.proxy_url, self._req_idx, model=self.model)
                     tasks.append(asyncio.create_task(_guarded()))
                     t += interval
 
@@ -613,6 +685,7 @@ class LoadTester:
             "max_tps": self.max_tps,
             "concurrency": self.concurrency,
             "proxy_url": self.proxy_url,
+            "model": self.model,
         }
         generate_report(self.request_results, self.metrics_history, config, steady_tps, reached_steady)
 
@@ -626,11 +699,49 @@ def main():
     parser.add_argument("--requests", type=int, default=0, help="Total requests to send (simple mode)")
     parser.add_argument("--tps", type=float, default=0, help="Target TPS limit to verify (simple mode)")
     parser.add_argument("--concurrency", type=int, default=10, help="Max concurrent connections")
+    parser.add_argument("--model", default=None, help="Model name to send in requests")
     parser.add_argument("--ramp-step", type=float, default=1.0, help="TPS increase per ramp interval (ramp mode)")
     parser.add_argument("--ramp-interval", type=float, default=2.0, help="Seconds between ramp steps (ramp mode)")
     parser.add_argument("--hold-duration", type=float, default=60.0, help="Seconds to hold steady state (ramp mode)")
     parser.add_argument("--max-tps", type=float, default=100.0, help="Maximum TPS target (ramp mode)")
+
+    # Provider setup helpers
+    parser.add_argument("--setup-provider", action="append", nargs=4,
+                        metavar=("NAME", "ENDPOINT_URL", "RATE_TPS", "MODEL"),
+                        help="Add provider: NAME ENDPOINT_URL RATE_TPS MODEL (repeatable)")
+    parser.add_argument("--setup-global-tps", type=float, default=0,
+                        help="Global TPS limit when using --setup-provider")
+    parser.add_argument("--setup-mapping", action="append", nargs=2,
+                        metavar=("MODEL_ID", "PROVIDER_NAME"),
+                        help="Map MODEL_ID to PROVIDER_NAME (repeatable)")
     args = parser.parse_args()
+
+    # Configure providers if requested
+    if args.setup_provider:
+        print("\n[setup] Configuring proxy providers...")
+        providers = []
+        for name, endpoint, rate_tps, model in args.setup_provider:
+            providers.append({
+                "name": name,
+                "api_type": "openai",
+                "endpoint_url": endpoint,
+                "api_key": "sk-mock",
+                "model_name": model,
+                "is_active": True,
+                "rate_limit_tps": float(rate_tps) if rate_tps != "0" else None,
+            })
+        mappings = []
+        if args.setup_mapping:
+            for model_id, provider_name in args.setup_mapping:
+                mappings.append({"model_id": model_id, "provider_name": provider_name})
+
+        asyncio.run(setup_proxy_providers(
+            proxy_url=args.proxy_url,
+            providers=providers,
+            model_mappings=mappings,
+            global_tps=args.setup_global_tps,
+        ))
+        print()
 
     tester = LoadTester(
         proxy_url=args.proxy_url,
@@ -641,6 +752,7 @@ def main():
         concurrency=args.concurrency,
         num_requests=args.requests,
         target_tps=args.tps,
+        model=args.model,
     )
     asyncio.run(tester.run())
 

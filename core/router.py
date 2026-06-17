@@ -15,7 +15,7 @@ import httpx
 
 from .providers.service import get_provider_service
 from .providers.base import BaseProvider
-from .rate_limiter import RateLimiter
+from .rate_limiter import RateLimiter, PerProviderRateLimiter, get_per_provider_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,13 @@ class RouterService:
         self,
         http_client: httpx.AsyncClient,
         rate_limiter: RateLimiter,
+        per_provider_limiter: PerProviderRateLimiter = None,
         logger_service=None
     ):
         self.provider_service = get_provider_service()
         self.http_client = http_client
         self.rate_limiter = rate_limiter
+        self.per_provider_limiter = per_provider_limiter or get_per_provider_limiter()
         self.logger_service = logger_service
 
     async def route_anthropic_request(
@@ -71,8 +73,8 @@ class RouterService:
                 detail="No active provider configured"
             )
 
-        # Apply rate limiting (use provider-specific limit if set, else global)
-        await self.rate_limiter.wait(tps_override=provider.rate_limit_tps)
+        # Apply rate limiting (per-provider if configured, else global)
+        await self.per_provider_limiter.wait_for_provider(provider.provider_id, provider.rate_limit_tps)
 
         # Wrap request to provider format
         wrapped_request = provider.wrap_request(anthropic_request)
@@ -137,8 +139,8 @@ class RouterService:
                 detail="No active provider configured"
             )
 
-        # Apply rate limiting
-        await self.rate_limiter.wait()
+        # Apply rate limiting (per-provider if configured, else global)
+        await self.per_provider_limiter.wait_for_provider(provider.provider_id, provider.rate_limit_tps)
 
         # For now, we translate OpenAI -> Anthropic then use provider.wrap_request
         from .providers.translation import openai_to_anthropic_request
@@ -518,9 +520,10 @@ def get_router_service() -> RouterService:
 def init_router_service(
     http_client: httpx.AsyncClient,
     rate_limiter: RateLimiter,
+    per_provider_limiter: PerProviderRateLimiter = None,
     logger_service=None
 ) -> RouterService:
     """Initialize the global router service."""
     global _router_service
-    _router_service = RouterService(http_client, rate_limiter, logger_service)
+    _router_service = RouterService(http_client, rate_limiter, per_provider_limiter, logger_service)
     return _router_service

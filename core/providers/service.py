@@ -126,7 +126,8 @@ class ProviderService:
             endpoint_url=config["endpoint_url"],
             api_key=config["api_key"],
             model_name=config["model_name"],
-            is_active=config.get("is_active", 0)
+            is_active=config.get("is_active", 0),
+            rate_limit_tps=config.get("rate_limit_tps")
         )
         
         self._invalidate_cache()

@@ -6,7 +6,7 @@ import httpx
 import logging
 
 import database as db
-from core.rate_limiter import init_rate_limiter
+from core.rate_limiter import init_rate_limiter, get_per_provider_limiter
 from core.router import init_router_service
 from infrastructure.http_client import init_http_client
 
@@ -38,7 +38,8 @@ async def startup_event():
     
     # Initialize core services
     rate_limiter = init_rate_limiter()
-    init_router_service(http_client, rate_limiter)
+    per_provider_limiter = get_per_provider_limiter()
+    init_router_service(http_client, rate_limiter, per_provider_limiter)
     
     logger.info("Application services initialized")
 

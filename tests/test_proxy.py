@@ -380,6 +380,51 @@ async def test_rate_limiter_logic():
     # Should be near instant
     assert (end - start) < 0.1
 
+@pytest.mark.anyio
+async def test_per_provider_rate_limiter():
+    from core.rate_limiter import PerProviderRateLimiter
+    import asyncio
+
+    pl = PerProviderRateLimiter(global_tps=0)
+
+    # Provider A: 2 TPS (0.5s interval)
+    # Provider B: 2 TPS (0.5s interval)
+    # They should be independent
+
+    start = time.time()
+
+    # Two requests to provider A back-to-back
+    await pl.wait_for_provider(1, 2.0)
+    await pl.wait_for_provider(1, 2.0)
+    a_elapsed = time.time() - start
+
+    start = time.time()
+    # Two requests to provider B back-to-back
+    await pl.wait_for_provider(2, 2.0)
+    await pl.wait_for_provider(2, 2.0)
+    b_elapsed = time.time() - start
+
+    # Each pair should take ~0.5s (2 TPS = 0.5s interval)
+    assert 0.4 <= a_elapsed <= 0.7
+    assert 0.4 <= b_elapsed <= 0.7
+
+    # Now test that cross-provider calls don't block each other
+    # Reset timing
+    pl = PerProviderRateLimiter(global_tps=0)
+    start = time.time()
+    await pl.wait_for_provider(1, 2.0)  # instant
+    await pl.wait_for_provider(2, 2.0)  # should be instant (different provider)
+    cross_elapsed = time.time() - start
+    assert cross_elapsed < 0.1  # no blocking between providers
+
+    # Test global fallback (no per-provider limit)
+    pl2 = PerProviderRateLimiter(global_tps=2.0)
+    start = time.time()
+    await pl2.wait_for_provider(99, None)  # uses global
+    await pl2.wait_for_provider(99, None)  # uses global
+    global_elapsed = time.time() - start
+    assert 0.4 <= global_elapsed <= 0.7  # 2 TPS = 0.5s interval
+
 # --- Unit Tests for DB Limits and Logging ---
 
 def test_database_logging_limits(tmp_path):
