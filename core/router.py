@@ -99,12 +99,22 @@ class RouterService:
                     req_body_str=req_body_str,
                     path="/v1/messages"
                 )
+        except HTTPException:
+            raise
         except httpx.HTTPStatusError as e:
-            await self._handle_http_error(provider, e, req_body_str, path="/v1/messages")
+            await self._handle_http_error(provider, e.response, req_body_str, path="/v1/messages")
             raise
         except Exception as e:
-            logger.error(f"Routing error: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.error(f"Routing error: {e}", exc_info=True)
+            self._log_request(
+                provider=provider,
+                method="POST",
+                path="/v1/messages",
+                request_body=req_body_str,
+                response_status=500,
+                response_body=str(e)
+            )
+            raise HTTPException(status_code=500, detail=str(e) or "Unknown routing error")
 
     async def route_openai_request(
         self,
@@ -170,12 +180,22 @@ class RouterService:
                     path="/v1/chat/completions",
                     is_openai_target=True
                 )
+        except HTTPException:
+            raise
         except httpx.HTTPStatusError as e:
-            await self._handle_http_error(provider, e, req_body_str, path="/v1/chat/completions")
+            await self._handle_http_error(provider, e.response, req_body_str, path="/v1/chat/completions")
             raise
         except Exception as e:
-            logger.error(f"Routing error: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.error(f"Routing error: {e}", exc_info=True)
+            self._log_request(
+                provider=provider,
+                method="POST",
+                path="/v1/chat/completions",
+                request_body=req_body_str,
+                response_status=500,
+                response_body=str(e)
+            )
+            raise HTTPException(status_code=500, detail=str(e) or "Unknown routing error")
 
     async def _handle_non_streaming(
         self,
