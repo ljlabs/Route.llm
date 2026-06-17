@@ -2,3 +2,4 @@
 **/*.db
 **/venv/*
 .tmp_workspace/*
+integration/output/*

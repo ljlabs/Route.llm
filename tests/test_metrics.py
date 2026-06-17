@@ -211,3 +211,113 @@ async def test_router_metrics_estimation_fallback(tmp_path, respx_mock):
     # "Hello world! This is a test." -> 28 chars // 4 = 7
     assert log["tokens_sent"] == 6
     assert log["tokens_received"] == 7
+
+
+# --- API Integration Tests ---
+
+@pytest.mark.anyio
+async def test_logs_api(tmp_path):
+    import os
+    from fastapi.testclient import TestClient
+    from main import app
+
+    db_file = os.path.join(tmp_path, "test_logs_api.db")
+    db.DB_PATH = db_file
+    db.init_db()
+    db.clear_logs()
+
+    client = TestClient(app)
+
+    # GET /api/logs - empty
+    response = client.get("/api/logs")
+    assert response.status_code == 200
+    assert response.json() == []
+
+    # Add a log directly
+    db.add_log("TestProvider", "POST", "/v1/messages", "{}", 200, "{}")
+
+    # GET /api/logs - should have one entry
+    response = client.get("/api/logs")
+    assert response.status_code == 200
+    logs = response.json()
+    assert len(logs) == 1
+    assert logs[0]["provider_name"] == "TestProvider"
+
+    # DELETE /api/logs - clear
+    response = client.delete("/api/logs")
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+    # Confirm cleared
+    response = client.get("/api/logs")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.anyio
+async def test_latency_history_api(tmp_path):
+    import os
+    from fastapi.testclient import TestClient
+    from main import app
+
+    db_file = os.path.join(tmp_path, "test_latency_history.db")
+    db.DB_PATH = db_file
+    db.init_db()
+    db.clear_logs()
+
+    client = TestClient(app)
+
+    # Add logs with latency
+    db.add_log("ProviderA", "POST", "/v1/chat", "{}", 200, "{}", latency_ms=100)
+    db.add_log("ProviderA", "POST", "/v1/chat", "{}", 500, "{}", latency_ms=200)
+    db.add_log("ProviderB", "POST", "/v1/messages", "{}", 200, "{}", latency_ms=50)
+
+    response = client.get("/api/metrics/history")
+    assert response.status_code == 200
+    history = response.json()
+    # Only 200-status logs are included
+    assert len(history) == 2
+    # Should be ordered by timestamp ascending
+    assert history[0]["latency_ms"] == 100
+    assert history[1]["latency_ms"] == 50
+
+
+@pytest.mark.anyio
+async def test_routing_api(tmp_path):
+    import os
+    from fastapi.testclient import TestClient
+    from main import app
+
+    db_file = os.path.join(tmp_path, "test_routing_api.db")
+    db.DB_PATH = db_file
+    db.init_db()
+    db.clear_logs()
+
+    client = TestClient(app)
+
+    # Create a provider
+    db.add_provider("RoutedProvider", "openai", "http://test.com", "sk-test", "model-a", is_active=0)
+    providers = db.get_providers()
+    provider_id = providers[0]["id"]
+
+    # POST /api/routing - add mapping
+    response = client.post("/api/routing", json={"model_id": "my-model", "provider_id": provider_id})
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+    # GET /api/routing - list mappings
+    response = client.get("/api/routing")
+    assert response.status_code == 200
+    mappings = response.json()
+    assert len(mappings) == 1
+    assert mappings[0]["model_id"] == "my-model"
+    assert mappings[0]["provider_name"] == "RoutedProvider"
+
+    # DELETE /api/routing/{model_id}
+    response = client.delete("/api/routing/my-model")
+    assert response.status_code == 200
+
+    # Confirm deleted
+    response = client.get("/api/routing")
+    assert response.status_code == 200
+    assert response.json() == []
