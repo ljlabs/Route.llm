@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI
+import time
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import httpx
@@ -12,7 +13,7 @@ from infrastructure.http_client import init_http_client
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -43,6 +44,20 @@ async def startup_event():
     
     logger.info("Application services initialized")
 
+    # Log all registered routes
+    for route in app.routes:
+        if hasattr(route, "path"):
+            logger.info(f"  Route: {route.path} [{getattr(route, 'methods', 'mount')}]")
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.perf_counter()
+    logger.debug(f"--> {request.method} {request.url.path} (query={request.url.query})")
+    response = await call_next(request)
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+    logger.debug(f"<-- {request.method} {request.url.path} -> {response.status_code} ({elapsed_ms}ms)")
+    return response
+
 @app.on_event("shutdown")
 async def shutdown_event():
     from infrastructure.http_client import get_http_client
@@ -67,6 +82,14 @@ app.include_router(proxy_router)
 app.include_router(routing_router)
 app.include_router(metrics_router)
 
-# Mount static files for the Dashboard
+# Serve the dashboard at root
+from fastapi.responses import FileResponse
+
 static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+
+@app.get("/", include_in_schema=False)
+async def serve_dashboard():
+    return FileResponse(os.path.join(static_dir, "index.html"))
+
+# Mount static assets (CSS, JS, images) — NOT at "/" to avoid catch-all
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
