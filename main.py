@@ -92,4 +92,4 @@ async def serve_dashboard():
     return FileResponse(os.path.join(static_dir, "index.html"))
 
 # Mount static assets (CSS, JS, images) — NOT at "/" to avoid catch-all
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
+app.mount("/", StaticFiles(directory=static_dir), name="static")
