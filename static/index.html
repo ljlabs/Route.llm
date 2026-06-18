@@ -254,6 +254,11 @@
                     <input type="number" id="provider-rate-limit" step="0.01" placeholder="Use global limit" class="form-control">
                     <p class="subtitle" style="font-size: 0.8rem; margin-top: 4px;">Optional: Override global rate limit for this provider.</p>
                 </div>
+                <div class="form-group">
+                    <label for="provider-max-tokens">Max Tokens</label>
+                    <input type="number" id="provider-max-tokens" min="1" step="1" placeholder="Use global default" class="form-control">
+                    <p class="subtitle" style="font-size: 0.8rem; margin-top: 4px;">Optional: Override global max tokens for this provider.</p>
+                </div>
                 <div class="form-group form-checkbox">
                     <input type="checkbox" id="provider-is-active">
                     <label for="provider-is-active">Make Active Provider</label>
@@ -300,6 +305,14 @@
                     <span style="color: var(--text-secondary); white-space: nowrap;">msgs / sec</span>
                 </div>
                 <p class="subtitle" style="margin-top: 8px;">Set to 0 to disable throttling. This applies across all agents and providers.</p>
+            </div>
+            <div class="form-group">
+                <label for="global-max-tokens">Global Max Tokens</label>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <input type="number" id="global-max-tokens" min="1" step="1" placeholder="32000" class="form-control" style="flex-grow: 1;">
+                    <span style="color: var(--text-secondary); white-space: nowrap;">tokens</span>
+                </div>
+                <p class="subtitle" style="margin-top: 8px;">Default max tokens when providers don't specify their own. Set to 32000 to match Claude Code.</p>
             </div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeGlobalSettingsModal()">Cancel</button>

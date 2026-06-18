@@ -24,7 +24,8 @@ class BaseProvider(ABC):
         api_type: str,
         is_active: bool = False,
         provider_id: Optional[int] = None,
-        rate_limit_tps: Optional[float] = None
+        rate_limit_tps: Optional[float] = None,
+        max_tokens: Optional[int] = None
     ):
         self.name = name
         self.endpoint_url = endpoint_url
@@ -34,6 +35,7 @@ class BaseProvider(ABC):
         self.is_active = is_active
         self.provider_id = provider_id
         self.rate_limit_tps = rate_limit_tps
+        self.max_tokens = max_tokens
     
     @abstractmethod
     def wrap_request(self, anthropic_request: Dict[str, Any]) -> Dict[str, Any]:

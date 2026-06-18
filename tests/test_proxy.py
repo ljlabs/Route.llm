@@ -566,3 +566,146 @@ async def test_router_routing_logic(tmp_path):
         assert service.get_provider_by_model("unknown-model") is None
         assert service.get_active_provider().name == "GlobalProvider"
 
+# --- Unit Tests for Max Tokens ---
+
+def test_database_max_tokens_default(tmp_path):
+    """Test that global max_tokens defaults to 32000."""
+    import os
+    db_file = os.path.join(tmp_path, "test_max_tokens.db")
+    db.DB_PATH = db_file
+    db.init_db()
+    assert db.get_max_tokens() == 32000
+
+def test_database_max_tokens_set_get(tmp_path):
+    """Test setting and getting global max_tokens."""
+    import os
+    db_file = os.path.join(tmp_path, "test_max_tokens2.db")
+    db.DB_PATH = db_file
+    db.init_db()
+    db.set_max_tokens(16000)
+    assert db.get_max_tokens() == 16000
+    db.set_max_tokens(8192)
+    assert db.get_max_tokens() == 8192
+
+def test_provider_max_tokens_passthrough(tmp_path):
+    """Test that max_tokens is stored and passed through to providers."""
+    import os
+    db_file = os.path.join(tmp_path, "test_provider_max_tokens.db")
+    db.DB_PATH = db_file
+    db.init_db()
+
+    # Add provider with max_tokens
+    db.add_provider("TestMaxTokens", "openai", "https://api.test.com/v1/chat/completions",
+                     "sk-test", "test-model", is_active=0, max_tokens=8192)
+    providers = db.get_providers()
+    assert providers[0]["max_tokens"] == 8192
+
+    # Add provider without max_tokens
+    db.add_provider("TestNoMaxTokens", "openai", "https://api.test.com/v1/chat/completions",
+                     "sk-test", "test-model", is_active=0)
+    providers = db.get_providers()
+    assert providers[1]["max_tokens"] is None
+
+def test_provider_max_tokens_update(tmp_path):
+    """Test updating provider max_tokens."""
+    import os
+    db_file = os.path.join(tmp_path, "test_update_max_tokens.db")
+    db.DB_PATH = db_file
+    db.init_db()
+
+    db.add_provider("ToUpdate", "openai", "url", "key", "model", is_active=0, max_tokens=4096)
+    providers = db.get_providers()
+    pid = providers[0]["id"]
+
+    db.update_provider(pid, "ToUpdate", "openai", "url", "key", "model", 0, max_tokens=16384)
+    updated = [p for p in db.get_providers() if p["id"] == pid][0]
+    assert updated["max_tokens"] == 16384
+
+def test_provider_factory_passes_max_tokens():
+    """Test that ProviderFactory passes max_tokens to provider instances."""
+    factory = ProviderFactory()
+    config = {
+        "name": "MaxTokensProvider",
+        "api_type": "openai",
+        "endpoint_url": "https://api.test.com/v1/chat/completions",
+        "api_key": "sk-test",
+        "model_name": "test-model",
+        "is_active": 0,
+        "id": 1,
+        "max_tokens": 8192
+    }
+    provider = factory.create_provider(config)
+    assert provider.max_tokens == 8192
+
+def test_provider_factory_none_max_tokens():
+    """Test that ProviderFactory handles None max_tokens."""
+    factory = ProviderFactory()
+    config = {
+        "name": "NoMaxTokens",
+        "api_type": "openai",
+        "endpoint_url": "https://api.test.com/v1/chat/completions",
+        "api_key": "sk-test",
+        "model_name": "test-model",
+        "is_active": 0,
+        "id": 1
+    }
+    provider = factory.create_provider(config)
+    assert provider.max_tokens is None
+
+def test_openai_response_null_usage():
+    """Test that openai_to_anthropic_response handles null usage (e.g. NVIDIA NIM)."""
+    openai_res = {
+        "id": "chatcmpl-nvidia",
+        "model": "minimaxai/minimax-m3",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello! How can I help you?"
+                },
+                "finish_reason": "stop"
+            }
+        ],
+        "usage": None
+    }
+    anth_res = ts.openai_to_anthropic_response(openai_res)
+    assert anth_res["content"][0]["text"] == "Hello! How can I help you?"
+    assert anth_res["usage"]["input_tokens"] == 0
+    assert anth_res["usage"]["output_tokens"] == 0
+
+def test_openai_response_missing_usage():
+    """Test that openai_to_anthropic_response handles missing usage key."""
+    openai_res = {
+        "id": "chatcmpl-nousage",
+        "model": "test-model",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Response text"
+                },
+                "finish_reason": "stop"
+            }
+        ]
+    }
+    anth_res = ts.openai_to_anthropic_response(openai_res)
+    assert anth_res["usage"]["input_tokens"] == 0
+    assert anth_res["usage"]["output_tokens"] == 0
+
+def test_settings_request_max_tokens():
+    """Test SettingsRequest model accepts max_tokens."""
+    from models.request import SettingsRequest
+    req = SettingsRequest(max_tokens=16000)
+    assert req.max_tokens == 16000
+
+    req2 = SettingsRequest()
+    assert req2.max_tokens is None
+
+def test_settings_response_max_tokens():
+    """Test SettingsResponse model includes max_tokens."""
+    from models.provider import SettingsResponse
+    resp = SettingsResponse(log_limit=50, rate_limit_tps=0.0, max_tokens=32000)
+    assert resp.max_tokens == 32000
+

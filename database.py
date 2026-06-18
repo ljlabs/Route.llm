@@ -32,13 +32,21 @@ def init_db():
             api_key TEXT NOT NULL,
             model_name TEXT NOT NULL,
             is_active INTEGER DEFAULT 0,
-            rate_limit_tps REAL
+            rate_limit_tps REAL,
+            max_tokens INTEGER
         )
     """)
 
     # Migration: Add rate_limit_tps if it doesn't exist (for existing databases)
     try:
         cursor.execute("ALTER TABLE providers ADD COLUMN rate_limit_tps REAL")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
+    # Migration: Add max_tokens if it doesn't exist (for existing databases)
+    try:
+        cursor.execute("ALTER TABLE providers ADD COLUMN max_tokens INTEGER")
     except sqlite3.OperationalError:
         # Column already exists
         pass
@@ -88,6 +96,7 @@ def init_db():
     # Insert default settings if not exist
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('log_limit', '50')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('rate_limit_tps', '0')") # 0 means disabled
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('max_tokens', '32000')")
 
     conn.commit()
     conn.close()
@@ -109,28 +118,28 @@ def get_active_provider():
     conn.close()
     return dict(row) if row else None
 
-def add_provider(name, api_type, endpoint_url, api_key, model_name, is_active=0, rate_limit_tps=None):
+def add_provider(name, api_type, endpoint_url, api_key, model_name, is_active=0, rate_limit_tps=None, max_tokens=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     if is_active == 1:
         cursor.execute("UPDATE providers SET is_active = 0")
     cursor.execute("""
-        INSERT INTO providers (name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps))
+        INSERT INTO providers (name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps, max_tokens)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps, max_tokens))
     conn.commit()
     conn.close()
 
-def update_provider(provider_id, name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps=None):
+def update_provider(provider_id, name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps=None, max_tokens=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     if is_active == 1:
         cursor.execute("UPDATE providers SET is_active = 0 WHERE id != ?", (provider_id,))
     cursor.execute("""
         UPDATE providers
-        SET name = ?, api_type = ?, endpoint_url = ?, api_key = ?, model_name = ?, is_active = ?, rate_limit_tps = ?
+        SET name = ?, api_type = ?, endpoint_url = ?, api_key = ?, model_name = ?, is_active = ?, rate_limit_tps = ?, max_tokens = ?
         WHERE id = ?
-    """, (name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps, provider_id))
+    """, (name, api_type, endpoint_url, api_key, model_name, is_active, rate_limit_tps, max_tokens, provider_id))
     conn.commit()
     conn.close()
 
@@ -216,6 +225,21 @@ def set_rate_limit_tps(tps):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('rate_limit_tps', ?)", (str(tps),))
+    conn.commit()
+    conn.close()
+
+def get_max_tokens():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = 'max_tokens'")
+    row = cursor.fetchone()
+    conn.close()
+    return int(row['value']) if row else 32000
+
+def set_max_tokens(max_tokens):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('max_tokens', ?)", (str(max_tokens),))
     conn.commit()
     conn.close()
 

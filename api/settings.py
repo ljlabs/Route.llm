@@ -22,7 +22,8 @@ async def get_settings():
     try:
         return {
             "log_limit": db.get_log_limit(),
-            "rate_limit_tps": db.get_rate_limit_tps()
+            "rate_limit_tps": db.get_rate_limit_tps(),
+            "max_tokens": db.get_max_tokens()
         }
     except Exception as e:
         logger.error(f"Failed to get settings: {e}")
@@ -48,6 +49,11 @@ async def set_settings(settings: SettingsRequest):
             per_provider = get_per_provider_limiter()
             per_provider.set_global_rate(settings.rate_limit_tps)
             logger.info(f"Rate limit updated to {settings.rate_limit_tps} TPS")
+
+        # Update max tokens if provided
+        if settings.max_tokens is not None:
+            db.set_max_tokens(settings.max_tokens)
+            logger.info(f"Max tokens updated to {settings.max_tokens}")
 
         return {"status": "success", "message": "Settings updated"}
     except ValueError as e:

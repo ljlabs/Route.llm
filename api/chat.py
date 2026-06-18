@@ -37,9 +37,11 @@ async def test_chat(request: Request):
             raise HTTPException(status_code=400, detail="No active provider configured")
         
         # Build test request (use Anthropic format)
+        effective_max_tokens = active_prov.max_tokens or db.get_max_tokens()
         test_req = {
             "model": active_prov.model_name,
             "messages": [{"role": "user", "content": message}],
+            "max_tokens": effective_max_tokens,
             "stream": False
         }
         

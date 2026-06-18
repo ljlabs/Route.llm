@@ -76,6 +76,12 @@ class RouterService:
         # Apply rate limiting (per-provider if configured, else global)
         await self.per_provider_limiter.wait_for_provider(provider.provider_id, provider.rate_limit_tps)
 
+        # Inject max_tokens if client didn't provide one
+        if "max_tokens" not in anthropic_request or not anthropic_request.get("max_tokens"):
+            import database as db
+            effective_max_tokens = provider.max_tokens or db.get_max_tokens()
+            anthropic_request["max_tokens"] = effective_max_tokens
+
         # Wrap request to provider format
         wrapped_request = provider.wrap_request(anthropic_request)
 
@@ -151,6 +157,12 @@ class RouterService:
 
         # Apply rate limiting (per-provider if configured, else global)
         await self.per_provider_limiter.wait_for_provider(provider.provider_id, provider.rate_limit_tps)
+
+        # Inject max_tokens if client didn't provide one
+        if "max_tokens" not in openai_request or not openai_request.get("max_tokens"):
+            import database as db
+            effective_max_tokens = provider.max_tokens or db.get_max_tokens()
+            openai_request["max_tokens"] = effective_max_tokens
 
         # For now, we translate OpenAI -> Anthropic then use provider.wrap_request
         from .providers.translation import openai_to_anthropic_request

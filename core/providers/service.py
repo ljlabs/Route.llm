@@ -127,7 +127,8 @@ class ProviderService:
             api_key=config["api_key"],
             model_name=config["model_name"],
             is_active=config.get("is_active", 0),
-            rate_limit_tps=config.get("rate_limit_tps")
+            rate_limit_tps=config.get("rate_limit_tps"),
+            max_tokens=config.get("max_tokens")
         )
         
         self._invalidate_cache()
@@ -160,7 +161,8 @@ class ProviderService:
             api_key=config["api_key"],
             model_name=config["model_name"],
             is_active=config.get("is_active", 0),
-            rate_limit_tps=config.get("rate_limit_tps", None)
+            rate_limit_tps=config.get("rate_limit_tps", None),
+            max_tokens=config.get("max_tokens", None)
         )
         
         self._invalidate_cache()

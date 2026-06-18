@@ -18,6 +18,7 @@ class ProviderConfig(BaseModel):
     model_name: str = Field(..., description="Model identifier")
     is_active: bool = Field(default=False, description="Whether this is the active provider")
     rate_limit_tps: Optional[float] = Field(default=None, description="Provider-specific rate limit in TPS")
+    max_tokens: Optional[int] = Field(default=None, description="Provider-specific max tokens override")
 
 
 class ProviderCreate(BaseModel):
@@ -29,6 +30,7 @@ class ProviderCreate(BaseModel):
     model_name: str = Field(..., description="Model name")
     is_active: bool = Field(default=False, description="Set as active provider")
     rate_limit_tps: Optional[float] = Field(default=None, description="Provider-specific rate limit in TPS")
+    max_tokens: Optional[int] = Field(default=None, description="Provider-specific max tokens override")
 
 
 class ProviderUpdate(BaseModel):
@@ -40,6 +42,7 @@ class ProviderUpdate(BaseModel):
     model_name: Optional[str] = None
     is_active: Optional[bool] = None
     rate_limit_tps: Optional[float] = None
+    max_tokens: Optional[int] = None
 
 
 class ProviderResponse(BaseModel):
@@ -52,6 +55,7 @@ class ProviderResponse(BaseModel):
     model_name: str
     is_active: bool
     rate_limit_tps: Optional[float] = None
+    max_tokens: Optional[int] = None
     
     class Config:
         from_attributes = True
@@ -61,6 +65,7 @@ class SettingsResponse(BaseModel):
     """Model for settings API responses."""
     log_limit: int
     rate_limit_tps: float
+    max_tokens: int
 
 
 class LogEntry(BaseModel):

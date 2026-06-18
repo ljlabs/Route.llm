@@ -161,6 +161,10 @@ function renderProviders(providers, metrics = []) {
             ? `${p.rate_limit_tps} TPS`
             : 'Global';
 
+        const maxTokensText = p.max_tokens
+            ? `${p.max_tokens.toLocaleString()}`
+            : 'Global';
+
         card.innerHTML = `
             <div class="card-header">
                 <div>
@@ -173,6 +177,7 @@ function renderProviders(providers, metrics = []) {
                 <div><span>Endpoint:</span> <span class="val">${p.endpoint_url}</span></div>
                 <div><span>Routing ID:</span> <span class="val">${p.model_name}</span></div>
                 <div><span>Rate Limit:</span> <span class="val">${rateLimitText}</span></div>
+                <div><span>Max Tokens:</span> <span class="val">${maxTokensText}</span></div>
                 <div><span>Avg Latency:</span> <span class="val">${avgLatency}</span></div>
                 <div><span>API Key:</span> <span class="val">••••••••</span></div>
             </div>
@@ -231,6 +236,7 @@ function openProviderModal(provider = null) {
         document.getElementById("provider-api-key").value = provider.api_key;
         document.getElementById("provider-model-name").value = provider.model_name;
         document.getElementById("provider-rate-limit").value = provider.rate_limit_tps || "";
+        document.getElementById("provider-max-tokens").value = provider.max_tokens || "";
         document.getElementById("provider-is-active").checked = provider.is_active === 1;
     } else if (provider) {
         title.innerText = "Add Provider";
@@ -241,6 +247,7 @@ function openProviderModal(provider = null) {
         document.getElementById("provider-api-key").value = provider.api_key;
         document.getElementById("provider-model-name").value = provider.model_name;
         document.getElementById("provider-rate-limit").value = provider.rate_limit_tps || "";
+        document.getElementById("provider-max-tokens").value = provider.max_tokens || "";
         document.getElementById("provider-is-active").checked = false;
     } else {
         title.innerText = "Add Provider";
@@ -272,6 +279,7 @@ async function handleProviderSubmit(event) {
         api_key: document.getElementById("provider-api-key").value,
         model_name: document.getElementById("provider-model-name").value,
         rate_limit_tps: parseFloat(document.getElementById("provider-rate-limit").value) || null,
+        max_tokens: parseInt(document.getElementById("provider-max-tokens").value) || null,
         is_active: document.getElementById("provider-is-active").checked ? 1 : 0
     };
     
@@ -302,6 +310,9 @@ async function fetchSettings() {
         if (document.getElementById("global-rate-limit")) {
             document.getElementById("global-rate-limit").value = settings.rate_limit_tps;
         }
+        if (document.getElementById("global-max-tokens")) {
+            document.getElementById("global-max-tokens").value = settings.max_tokens;
+        }
         return settings;
     } catch (err) {
         console.error(err);
@@ -319,11 +330,12 @@ function closeGlobalSettingsModal() {
 
 async function saveGlobalRateLimit() {
     const tps = parseFloat(document.getElementById("global-rate-limit").value) || 0;
+    const maxTokens = parseInt(document.getElementById("global-max-tokens").value) || 32000;
     try {
         const res = await fetch("/api/settings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ rate_limit_tps: tps })
+            body: JSON.stringify({ rate_limit_tps: tps, max_tokens: maxTokens })
         });
         if (res.ok) {
             closeGlobalSettingsModal();

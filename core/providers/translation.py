@@ -349,8 +349,8 @@ def openai_to_anthropic_response(openai_res: dict) -> dict:
         "stop_reason": stop_reason,
         "stop_sequence": None,
         "usage": {
-            "input_tokens": openai_res.get("usage", {}).get("prompt_tokens", 0),
-            "output_tokens": openai_res.get("usage", {}).get("completion_tokens", 0)
+            "input_tokens": (openai_res.get("usage") or {}).get("prompt_tokens", 0),
+            "output_tokens": (openai_res.get("usage") or {}).get("completion_tokens", 0)
         }
     }
 
