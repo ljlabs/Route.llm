@@ -113,7 +113,7 @@ async def activate_provider(provider_id: int):
         if not provider:
             raise HTTPException(status_code=404, detail="Provider not found")
 
-        if provider.get("api_type") == "embedding":
+        if provider.get("api_type") in ("embedding", "embedding_nvidia_nim"):
             db.set_active_embedding_provider(provider_id)
         else:
             db.set_active_provider(provider_id)

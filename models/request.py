@@ -49,6 +49,8 @@ class EmbeddingRequest(BaseModel):
     model: Optional[str] = Field(default=None, description="Model identifier (optional if active embedding provider is set)")
     input: Union[str, List[str]] = Field(..., description="Text(s) to generate embeddings for")
     encoding_format: Optional[str] = Field(default="float", description="Encoding format (float or base64)")
+    input_type: Optional[str] = Field(default=None, description="Input type for providers that require it (e.g. 'query' or 'passage' for Nvidia NIM)")
+    truncate: Optional[str] = Field(default=None, description="Truncation strategy (e.g. 'NONE', 'START', 'END' for Nvidia NIM)")
 
 
 class ChatTestRequest(BaseModel):
