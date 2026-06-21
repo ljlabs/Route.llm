@@ -51,6 +51,13 @@ def init_db():
         # Column already exists
         pass
 
+    # Migration: Add is_active_embedding if it doesn't exist (for existing databases)
+    try:
+        cursor.execute("ALTER TABLE providers ADD COLUMN is_active_embedding INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
     # Create model mappings table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS model_mappings (
@@ -167,6 +174,22 @@ def set_active_provider(provider_id):
     cursor.execute("UPDATE providers SET is_active = 1 WHERE id = ?", (provider_id,))
     conn.commit()
     conn.close()
+
+def set_active_embedding_provider(provider_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE providers SET is_active_embedding = 0")
+    cursor.execute("UPDATE providers SET is_active_embedding = 1 WHERE id = ?", (provider_id,))
+    conn.commit()
+    conn.close()
+
+def get_active_embedding_provider():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM providers WHERE is_active_embedding = 1 LIMIT 1")
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 # Model Mapping operations
 def get_model_mappings():

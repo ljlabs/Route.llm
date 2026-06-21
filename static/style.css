@@ -1035,3 +1035,243 @@ body {
     grid-column: 1 / -1;
     min-height: 350px;
 }
+
+/* Embedding Tab Styles */
+.embedding-container {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 24px;
+    width: 100%;
+}
+
+.embedding-input-section {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.embedding-result-section {
+    border-top: 1px solid var(--border-color);
+    padding-top: 24px;
+}
+
+.embedding-result-section h3 {
+    margin-bottom: 16px;
+    color: var(--text-primary);
+}
+
+.embedding-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.embedding-stat {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.stat-value {
+    display: block;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.embedding-json {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.embedding-error {
+    color: var(--danger);
+    padding: 12px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+
+.file-upload-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.file-upload-zone:hover,
+.file-upload-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.file-upload-icon {
+    font-size: 1.5rem;
+    color: var(--text-secondary);
+}
+
+#file-upload-text {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.file-upload-hint {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.btn-embedding {
+    align-self: flex-start;
+    margin-top: 8px;
+}
+
+/* Embedding Tab Styles */
+.embedding-container {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 24px;
+    width: 100%;
+}
+
+.embedding-input-section {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.embedding-result-section {
+    border-top: 1px solid var(--border-color);
+    padding-top: 24px;
+}
+
+.embedding-result-section h3 {
+    margin-bottom: 16px;
+    color: var(--text-primary);
+}
+
+.embedding-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.embedding-stat {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.stat-value {
+    display: block;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.embedding-json {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.embedding-error {
+    color: var(--danger);
+    padding: 12px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+
+.file-upload-zone {
+    border: 2px dashed var(--border-color);
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.file-upload-zone:hover,
+.file-upload-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.file-upload-icon {
+    font-size: 1.5rem;
+    color: var(--text-secondary);
+}
+
+#file-upload-text {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.file-upload-hint {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.btn-embedding {
+    align-self: flex-start;
+    margin-top: 8px;
+}

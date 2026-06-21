@@ -190,6 +190,17 @@ class ProviderService:
         db.set_active_provider(provider_id)
         self._invalidate_cache()
     
+    def get_active_embedding_provider(self) -> Optional[BaseProvider]:
+        """Get the active embedding provider."""
+        provider_config = db.get_active_embedding_provider()
+        if not provider_config:
+            return None
+        try:
+            return self._factory.create_provider(provider_config)
+        except Exception as e:
+            logger.error(f"Failed to create embedding provider: {e}")
+            return None
+
     def get_supported_types(self) -> List[str]:
         """Get list of supported provider types."""
         return self._factory.get_supported_types()

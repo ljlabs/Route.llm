@@ -44,6 +44,13 @@ class OpenAIRequest(BaseModel):
     stream: bool = Field(default=False, description="Enable streaming")
 
 
+class EmbeddingRequest(BaseModel):
+    """OpenAI /v1/embeddings API request model."""
+    model: Optional[str] = Field(default=None, description="Model identifier (optional if active embedding provider is set)")
+    input: Union[str, List[str]] = Field(..., description="Text(s) to generate embeddings for")
+    encoding_format: Optional[str] = Field(default="float", description="Encoding format (float or base64)")
+
+
 class ChatTestRequest(BaseModel):
     """Model for /api/chat test endpoint."""
     message: str = Field(..., description="User message to send")

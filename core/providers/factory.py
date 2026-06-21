@@ -13,6 +13,7 @@ from .anthropic import AnthropicProvider
 from .gemini import GeminiProvider
 from .mistral import MistralProvider
 from .openrouter import OpenRouterProvider
+from .embedding import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class ProviderFactory:
         "gemini": GeminiProvider,
         "mistral": MistralProvider,
         "openrouter": OpenRouterProvider,
+        "embedding": EmbeddingProvider,
     }
     
     @classmethod

@@ -27,6 +27,7 @@ async def get_providers():
         # Ensure is_active is boolean for Pydantic
         for p in providers:
             p["is_active"] = bool(p.get("is_active", 0))
+            p["is_active_embedding"] = bool(p.get("is_active_embedding", 0))
         return providers
     except Exception as e:
         logger.error(f"Failed to get providers: {e}")
@@ -42,6 +43,7 @@ async def get_provider(provider_id: int):
         if provider.get("id") == provider_id:
             provider = provider.copy()
             provider["is_active"] = bool(provider.get("is_active", 0))
+            provider["is_active_embedding"] = bool(provider.get("is_active_embedding", 0))
             return provider
     
     raise HTTPException(status_code=404, detail="Provider not found")
@@ -103,20 +105,20 @@ async def delete_provider(provider_id: int):
 
 @router.post("/{provider_id}/active")
 async def activate_provider(provider_id: int):
-    """Set a provider as active."""
+    """Set a provider as active (chat or embedding depending on api_type)."""
     try:
-        # Check if provider exists
         providers = provider_service.get_all_providers()
-        found = False
-        for p in providers:
-            if p.get("id") == provider_id:
-                found = True
-                break
-        
-        if not found:
+        provider = next((p for p in providers if p.get("id") == provider_id), None)
+
+        if not provider:
             raise HTTPException(status_code=404, detail="Provider not found")
-        
-        provider_service.set_active_provider(provider_id)
+
+        if provider.get("api_type") == "embedding":
+            db.set_active_embedding_provider(provider_id)
+        else:
+            db.set_active_provider(provider_id)
+            provider_service._invalidate_cache()
+
         return {"status": "success", "message": "Provider activated"}
     except HTTPException:
         raise

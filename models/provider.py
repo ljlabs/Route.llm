@@ -54,6 +54,7 @@ class ProviderResponse(BaseModel):
     api_key: str
     model_name: str
     is_active: bool
+    is_active_embedding: Optional[bool] = False
     rate_limit_tps: Optional[float] = None
     max_tokens: Optional[int] = None
     

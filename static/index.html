@@ -40,10 +40,15 @@
                 <button class="nav-btn" data-tab="playground">
                     <span class="nav-icon">💬</span> Chat Testbed
                 </button>
+                <button class="nav-btn" data-tab="embeddings">
+                    <span class="nav-icon">◈</span> Embeddings
+                </button>
             </nav>
             <div class="active-badge-container">
-                <div class="active-label">Active Provider:</div>
+                <div class="active-label">Chat Provider:</div>
                 <div id="sidebar-active-provider" class="active-value">None Selected</div>
+                <div class="active-label" style="margin-top: 6px;">Embedding Provider:</div>
+                <div id="sidebar-active-embedding-provider" class="active-value">None Selected</div>
             </div>
         </aside>
 
@@ -211,6 +216,45 @@
                     </div>
                 </div>
             </section>
+
+            <!-- Tab: Embeddings -->
+            <section id="tab-embeddings" class="tab-pane">
+                <div class="section-header">
+                    <div>
+                        <h1>Embeddings</h1>
+                        <p class="subtitle">Generate vector embeddings from text or files using the active embedding provider.</p>
+                    </div>
+                </div>
+
+                <div class="embedding-container glass-panel">
+                    <div class="embedding-input-section">
+                        <div class="form-group">
+                            <label for="embedding-model">Model</label>
+                            <input type="text" id="embedding-model" placeholder="e.g. gemini-embedding-2" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label for="embedding-input-text">Input Text</label>
+                            <textarea id="embedding-input-text" rows="4" placeholder="Enter text to embed, or upload a file below..." class="form-control"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Or Upload File</label>
+                            <div class="file-upload-zone" id="file-upload-zone" onclick="document.getElementById('embedding-input-file').click()" ondrop="handleFileDrop(event)" ondragover="event.preventDefault()" ondragleave="this.classList.remove('drag-over')">
+                                <input type="file" id="embedding-input-file" accept="text/*,.pdf,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.webm,.ogg" style="display:none" onchange="handleFileSelect(event)">
+                                <span class="file-upload-icon">⬆</span>
+                                <span id="file-upload-text">Drop a file here or click to upload</span>
+                                <span class="file-upload-hint">Supports: Text, Images, Audio, Video, PDF</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-embedding" onclick="sendEmbeddingRequest()">Generate Embeddings</button>
+                    </div>
+
+                    <div class="embedding-result-section" id="embedding-result" style="display:none;">
+                        <h3>Embedding Response</h3>
+                        <div class="embedding-stats" id="embedding-stats"></div>
+                        <pre id="embedding-raw-json" class="embedding-json"></pre>
+                    </div>
+                </div>
+            </section>
         </main>
     </div>
 
@@ -231,6 +275,7 @@
                         <option value="gemini">Google Gemini (AI Studio OpenAI Endpoint)</option>
                         <option value="mistral">Mistral AI (Strict OpenAI Format)</option>
                         <option value="anthropic">Anthropic API</option>
+                        <option value="embedding">Embedding (Google AI Studio)</option>
                     </select>
                 </div>
                 <div class="form-group">

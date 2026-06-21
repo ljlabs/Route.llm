@@ -93,6 +93,8 @@ function suggestBaseUrl() {
         urlInput.value = "https://generativelanguage.googleapis.com/v1beta/openai/v1/chat/completions";
     } else if (apiType === "mistral") {
         urlInput.value = "https://api.mistral.ai/v1/chat/completions";
+    } else if (apiType === "embedding") {
+        urlInput.value = "https://generativelanguage.googleapis.com/v1beta/openai/embeddings";
     } else {
         urlInput.value = "https://api.openai.com/v1/chat/completions";
     }
@@ -123,15 +125,19 @@ async function fetchProviders() {
 
         renderProviders(providers, metrics);
 
-        // Update sidebar and playground details
-        const active = providers.find(p => p.is_active === 1);
-        const activeText = active ? `${active.name} (${active.model_name})` : "None Selected";
-        document.getElementById("sidebar-active-provider").innerText = activeText;
+        // Update sidebar active providers
+        const activeChat = providers.find(p => p.is_active && p.api_type !== "embedding");
+        const activeEmbedding = providers.find(p => p.is_active_embedding);
+
+        document.getElementById("sidebar-active-provider").innerText =
+            activeChat ? `${activeChat.name} (${activeChat.model_name})` : "None Selected";
+        document.getElementById("sidebar-active-embedding-provider").innerText =
+            activeEmbedding ? `${activeEmbedding.name} (${activeEmbedding.model_name})` : "None Selected";
 
         const chatStatusText = document.getElementById("chat-active-provider");
         if (chatStatusText) {
-            chatStatusText.innerText = active
-                ? `Connected to Active Provider: ${active.name} [${active.model_name}]`
+            chatStatusText.innerText = activeChat
+                ? `Connected to Active Provider: ${activeChat.name} [${activeChat.model_name}]`
                 : "No Active Provider Selected. Configure one in Providers tab.";
         }
     } catch (err) {
@@ -155,7 +161,8 @@ function renderProviders(providers, metrics = []) {
             : 'N/A';
 
         const card = document.createElement("div");
-        card.className = `provider-card glass-panel ${p.is_active ? 'active-card' : ''}`;
+        const isActive = p.api_type === "embedding" ? p.is_active_embedding : p.is_active;
+        card.className = `provider-card glass-panel ${isActive ? 'active-card' : ''}`;
 
         const rateLimitText = p.rate_limit_tps
             ? `${p.rate_limit_tps} TPS`
@@ -171,7 +178,7 @@ function renderProviders(providers, metrics = []) {
                     <h3 class="provider-title">${p.name}</h3>
                     <span class="badge badge-api">${p.api_type}</span>
                 </div>
-                ${p.is_active ? '<span class="badge badge-active">Active</span>' : ''}
+                ${isActive ? `<span class="badge badge-active">${p.api_type === "embedding" ? "Active Embedding" : "Active"}</span>` : ''}
             </div>
             <div class="card-details">
                 <div><span>Endpoint:</span> <span class="val">${p.endpoint_url}</span></div>
@@ -182,7 +189,7 @@ function renderProviders(providers, metrics = []) {
                 <div><span>API Key:</span> <span class="val">••••••••</span></div>
             </div>
             <div class="card-actions">
-                ${!p.is_active ? `<button class="btn btn-primary" onclick="setActiveProvider(${p.id})">Set Active</button>` : ''}
+                ${!isActive ? `<button class="btn btn-primary" onclick="setActiveProvider(${p.id})">Set Active</button>` : ''}
                 <button class="btn btn-secondary" onclick="openProviderModal(${JSON.stringify(p).replace(/"/g, '&quot;')})">Edit</button>
                 <button class="btn btn-secondary" onclick="duplicateProvider(${JSON.stringify(p).replace(/"/g, '&quot;')})">Duplicate</button>
                 <button class="btn btn-danger" onclick="deleteProvider(${p.id})">Delete</button>
@@ -576,6 +583,115 @@ function clearChat() {
             Hello! I am connected to the active proxy provider. Send a message to test the response.
         </div>
     `;
+}
+
+// Embedding Tab Logic
+const EMBEDDING_ENDPOINT = window.location.port === "8081" ? "/v1/embeddings" : "http://127.0.0.1:8081/v1/embeddings";
+let embeddingSelectedFile = null;
+
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (file) {
+        embeddingSelectedFile = file;
+        document.getElementById("file-upload-text").textContent = file.name;
+        document.getElementById("embedding-input-text").placeholder = "File selected — click Generate to embed";
+    }
+}
+
+function handleFileDrop(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove("drag-over");
+    const file = event.dataTransfer.files[0];
+    if (file) {
+        embeddingSelectedFile = file;
+        document.getElementById("file-upload-text").textContent = file.name;
+        document.getElementById("embedding-input-text").placeholder = "File selected — click Generate to embed";
+    }
+}
+
+function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsText(file);
+    });
+}
+
+async function sendEmbeddingRequest() {
+    const textInput = document.getElementById("embedding-input-text");
+    const modelInput = document.getElementById("embedding-model");
+    const resultDiv = document.getElementById("embedding-result");
+    const statsDiv = document.getElementById("embedding-stats");
+    const jsonDiv = document.getElementById("embedding-raw-json");
+
+    let inputData;
+    if (textInput.value.trim()) {
+        inputData = textInput.value.trim();
+    } else if (embeddingSelectedFile) {
+        try {
+            inputData = await readFileAsText(embeddingSelectedFile);
+        } catch {
+            alert("Failed to read file.");
+            return;
+        }
+    } else {
+        alert("Please enter text or upload a file.");
+        return;
+    }
+
+    const model = modelInput.value.trim();
+
+    const btn = document.querySelector(".btn-embedding");
+    btn.disabled = true;
+    btn.textContent = "Generating...";
+
+    const reqBody = { input: inputData };
+    if (model) reqBody.model = model;
+
+    try {
+        const res = await fetch(EMBEDDING_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(reqBody)
+        });
+        const data = await res.json();
+        btn.disabled = false;
+        btn.textContent = "Generate Embeddings";
+
+        if (!res.ok) {
+            statsDiv.innerHTML = `<div class="embedding-error">${data.detail || "Request failed"}</div>`;
+            jsonDiv.textContent = JSON.stringify(data, null, 2);
+            resultDiv.style.display = "block";
+            return;
+        }
+
+        // Render stats
+        const vectorCount = data.data ? data.data.length : 0;
+        const dimensions = (data.data && data.data[0] && data.data[0].embedding)
+            ? data.data[0].embedding.length : 0;
+        const promptTokens = data.usage ? data.usage.prompt_tokens : "N/A";
+        const totalTokens = data.usage ? data.usage.total_tokens : "N/A";
+
+        statsDiv.innerHTML = `
+            <div class="embedding-stat-grid">
+                <div class="embedding-stat"><span class="stat-label">Vectors</span><span class="stat-value">${vectorCount}</span></div>
+                <div class="embedding-stat"><span class="stat-label">Dimensions</span><span class="stat-value">${dimensions}</span></div>
+                <div class="embedding-stat"><span class="stat-label">Prompt Tokens</span><span class="stat-value">${promptTokens}</span></div>
+                <div class="embedding-stat"><span class="stat-label">Total Tokens</span><span class="stat-value">${totalTokens}</span></div>
+                <div class="embedding-stat"><span class="stat-label">Model</span><span class="stat-value">${data.model || model}</span></div>
+            </div>
+        `;
+
+        jsonDiv.textContent = JSON.stringify(data, null, 2);
+        resultDiv.style.display = "block";
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Generate Embeddings";
+        statsDiv.innerHTML = `<div class="embedding-error">Error: ${err.message} — Is the embedding server running on port 8081?</div>`;
+        jsonDiv.textContent = "";
+        resultDiv.style.display = "block";
+    }
 }
 
 // Model Routing Management
