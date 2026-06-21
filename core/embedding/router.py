@@ -59,6 +59,7 @@ class EmbeddingRouterService:
         )
 
         # Wrap and send
+        logger.info(f"Provider Instance: {provider}")
         wrapped = provider.wrap_request(embedding_request)
         req_body_str = json.dumps(embedding_request, indent=2)
 
@@ -70,6 +71,7 @@ class EmbeddingRouterService:
                 json=wrapped,
                 headers=provider.get_headers()
             )
+            logger.info(f"Request To Nvidia NIM: {wrapped}")
         except httpx.RequestError as e:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             self._log_request(

@@ -95,6 +95,8 @@ function suggestBaseUrl() {
         urlInput.value = "https://api.mistral.ai/v1/chat/completions";
     } else if (apiType === "embedding") {
         urlInput.value = "https://generativelanguage.googleapis.com/v1beta/openai/embeddings";
+    } else if (apiType === "embedding_nvidia_nim") {
+        urlInput.value = "https://integrate.api.nvidia.com/v1/embeddings";
     } else {
         urlInput.value = "https://api.openai.com/v1/chat/completions";
     }
@@ -648,6 +650,9 @@ async function sendEmbeddingRequest() {
 
     const reqBody = { input: inputData };
     if (model) reqBody.model = model;
+    
+    reqBody.input_type = "passage";
+    reqBody.truncate = "NONE";
 
     try {
         const res = await fetch(EMBEDDING_ENDPOINT, {

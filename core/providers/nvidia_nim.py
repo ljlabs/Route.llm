@@ -7,7 +7,11 @@ Passes through input_type, encoding_format, and truncate fields required by NIM.
 
 from typing import Any, Dict
 from .base import BaseProvider
+import logging
 
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class NvidiaNimEmbeddingProvider(BaseProvider):
     """Provider for Nvidia NIM embedding APIs."""
