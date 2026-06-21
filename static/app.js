@@ -586,7 +586,7 @@ function clearChat() {
 }
 
 // Embedding Tab Logic
-const EMBEDDING_ENDPOINT = window.location.port === "8081" ? "/v1/embeddings" : "http://127.0.0.1:8081/v1/embeddings";
+const EMBEDDING_ENDPOINT = "/v1/embeddings";
 let embeddingSelectedFile = null;
 
 function handleFileSelect(event) {
@@ -688,7 +688,7 @@ async function sendEmbeddingRequest() {
     } catch (err) {
         btn.disabled = false;
         btn.textContent = "Generate Embeddings";
-        statsDiv.innerHTML = `<div class="embedding-error">Error: ${err.message} — Is the embedding server running on port 8081?</div>`;
+        statsDiv.innerHTML = `<div class="embedding-error">Error: ${err.message} — Is the embedding server running?</div>`;
         jsonDiv.textContent = "";
         resultDiv.style.display = "block";
     }
