@@ -9,6 +9,7 @@ import logging
 import database as db
 from core.rate_limiter import init_rate_limiter, get_per_provider_limiter
 from core.router import init_router_service
+from core.embedding.router import init_embedding_router_service
 from infrastructure.http_client import init_http_client
 
 # Configure logging
@@ -41,6 +42,7 @@ async def startup_event():
     rate_limiter = init_rate_limiter()
     per_provider_limiter = get_per_provider_limiter()
     init_router_service(http_client, rate_limiter, per_provider_limiter)
+    init_embedding_router_service(http_client, per_provider_limiter)
     
     logger.info("Application services initialized")
 
@@ -73,6 +75,7 @@ from api.chat import router as chat_router
 from api.proxy import router as proxy_router
 from api.routing import router as routing_router
 from api.metrics import router as metrics_router
+from api.embeddings import router as embeddings_router
 
 app.include_router(providers_router)
 app.include_router(settings_router)
@@ -81,6 +84,7 @@ app.include_router(chat_router)
 app.include_router(proxy_router)
 app.include_router(routing_router)
 app.include_router(metrics_router)
+app.include_router(embeddings_router)
 
 # Serve the dashboard at root
 from fastapi.responses import FileResponse
