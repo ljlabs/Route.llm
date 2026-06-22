@@ -37,6 +37,8 @@ class EmbeddingRouterService:
         embedding_request: Dict[str, Any]
     ) -> JSONResponse:
         """Route an embedding request to the active embedding provider."""
+        import database as db
+
         model_name = embedding_request.get("model")
 
         # Try model-specific routing first, then fall back to active embedding provider
@@ -62,6 +64,18 @@ class EmbeddingRouterService:
         logger.info(f"Provider Instance: {provider}")
         wrapped = provider.wrap_request(embedding_request)
         req_body_str = json.dumps(embedding_request, indent=2)
+        provider_req_str = json.dumps(wrapped, indent=2)
+
+        # Stage 1 — Router received
+        request_id = db.start_request_log(
+            provider_name=provider.name,
+            request_method="POST",
+            request_path="/v1/embeddings",
+            request_body=req_body_str,
+        )
+
+        # Stage 2 — About to send to provider
+        db.add_log_event(request_id, stage="provider_request", body=provider_req_str)
 
         start_time = time.perf_counter()
 
@@ -71,33 +85,33 @@ class EmbeddingRouterService:
                 json=wrapped,
                 headers=provider.get_headers()
             )
-            logger.info(f"Request To Nvidia NIM: {wrapped}")
+            logger.info(f"Request To Provider: {wrapped}")
         except httpx.RequestError as e:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
-            self._log_request(
-                provider=provider,
-                method="POST",
-                path="/v1/embeddings",
-                request_body=req_body_str,
+            # Stage 3 — Provider error (connection failed)
+            db.add_log_event(request_id, stage="provider_response", body=str(e), status_code=502)
+            # Stage 4 — Error response to client
+            db.complete_request_log(
+                request_id=request_id,
                 response_status=502,
                 response_body=str(e),
-                latency_ms=latency_ms
+                latency_ms=latency_ms,
             )
             raise HTTPException(status_code=502, detail=f"Backend unavailable: {e}")
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
+        # Stage 3 — Response received from provider
+        raw_response_text = response.text
+        db.add_log_event(
+            request_id,
+            stage="provider_response",
+            body=raw_response_text[:500],
+            status_code=response.status_code,
+        )
+
         if response.status_code >= 400:
-            error_text = response.text
-            self._log_request(
-                provider=provider,
-                method="POST",
-                path="/v1/embeddings",
-                request_body=req_body_str,
-                response_status=response.status_code,
-                response_body=error_text,
-                latency_ms=latency_ms
-            )
+            error_text = raw_response_text
             detail = f"Backend returned {response.status_code}"
             try:
                 err = response.json()
@@ -106,6 +120,13 @@ class EmbeddingRouterService:
             except Exception:
                 if error_text:
                     detail += f": {error_text[:200]}"
+            # Stage 4 — Error response to client
+            db.complete_request_log(
+                request_id=request_id,
+                response_status=response.status_code,
+                response_body=error_text,
+                latency_ms=latency_ms,
+            )
             raise HTTPException(status_code=response.status_code, detail=detail)
 
         response_json = response.json()
@@ -115,47 +136,17 @@ class EmbeddingRouterService:
         tokens_sent = usage.get("prompt_tokens", 0)
         tokens_received = usage.get("total_tokens", 0)
 
-        self._log_request(
-            provider=provider,
-            method="POST",
-            path="/v1/embeddings",
-            request_body=req_body_str,
+        # Stage 4 — Successful response to client
+        db.complete_request_log(
+            request_id=request_id,
             response_status=200,
             response_body=json.dumps(response_json, indent=2)[:500],
             tokens_sent=tokens_sent,
             tokens_received=tokens_received,
-            latency_ms=latency_ms
+            latency_ms=latency_ms,
         )
 
         return JSONResponse(content=response_json, status_code=200)
-
-    def _log_request(
-        self,
-        provider: BaseProvider,
-        method: str,
-        path: str,
-        request_body: str,
-        response_status: int,
-        response_body: str,
-        tokens_sent: int = 0,
-        tokens_received: int = 0,
-        latency_ms: int = 0
-    ):
-        try:
-            import database as db
-            db.add_log(
-                provider_name=provider.name,
-                request_method=method,
-                request_path=path,
-                request_body=request_body,
-                response_status=response_status,
-                response_body=response_body,
-                tokens_sent=tokens_sent,
-                tokens_received=tokens_received,
-                latency_ms=latency_ms
-            )
-        except Exception as e:
-            logger.error(f"Failed to log embedding request: {e}")
 
 
 # Global instance

@@ -6,8 +6,10 @@ import os
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy.db")
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 def init_db():
@@ -99,6 +101,19 @@ def init_db():
         except sqlite3.OperationalError:
             # Column already exists
             pass
+
+    # Create log_events table for fine-grained lifecycle tracking
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS log_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id INTEGER NOT NULL,
+            stage TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            body TEXT,
+            status_code INTEGER,
+            FOREIGN KEY (request_id) REFERENCES logs (id) ON DELETE CASCADE
+        )
+    """)
     
     # Insert default settings if not exist
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('log_limit', '50')")
@@ -267,6 +282,99 @@ def set_max_tokens(max_tokens):
     conn.close()
 
 # Log operations
+def start_request_log(provider_name, request_method, request_path, request_body):
+    """
+    Create an initial log row the moment a request arrives at the router.
+    Returns the new log row id so lifecycle events can be attached to it.
+    """
+    import logging
+    _log = logging.getLogger("database.lifecycle")
+
+    limit = get_log_limit()
+    if limit == -1:
+        _log.warning("[lifecycle] Logging disabled (limit=-1), skipping start_request_log")
+        return None  # Logging disabled
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    timestamp = datetime.now().isoformat()
+    # Insert with sentinel values — will be updated when the response is complete
+    cursor.execute("""
+        INSERT INTO logs (timestamp, provider_name, request_method, request_path,
+                          request_body, response_status, response_body,
+                          tokens_sent, tokens_received, latency_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0)
+    """, (timestamp, provider_name, request_method, request_path, request_body, 0, ""))
+    request_id = cursor.lastrowid
+    _log.info(f"[lifecycle] start_request_log: created log id={request_id} for {request_method} {request_path}")
+    # Stage 1: router received
+    cursor.execute("""
+        INSERT INTO log_events (request_id, stage, timestamp, body, status_code)
+        VALUES (?, 'router_received', ?, ?, NULL)
+    """, (request_id, timestamp, request_body))
+    _log.info(f"[lifecycle] start_request_log: inserted 'router_received' event for request_id={request_id}")
+    conn.commit()
+    conn.close()
+    return request_id
+
+
+def add_log_event(request_id, stage, body=None, status_code=None):
+    """
+    Append a lifecycle event to an existing log row.
+    Stages: 'provider_request', 'provider_response', 'client_response'
+    """
+    import logging
+    _log = logging.getLogger("database.lifecycle")
+
+    if request_id is None:
+        _log.warning(f"[lifecycle] add_log_event: request_id is None, skipping stage={stage}")
+        return
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    timestamp = datetime.now().isoformat()
+    cursor.execute("""
+        INSERT INTO log_events (request_id, stage, timestamp, body, status_code)
+        VALUES (?, ?, ?, ?, ?)
+    """, (request_id, stage, timestamp, body, status_code))
+    _log.info(f"[lifecycle] add_log_event: request_id={request_id} stage='{stage}' status_code={status_code}")
+    conn.commit()
+    conn.close()
+
+
+def complete_request_log(request_id, response_status, response_body,
+                          tokens_sent=0, tokens_received=0, latency_ms=0):
+    """
+    Finalise an existing log row with response data.
+    Also records the 'client_response' lifecycle event.
+    """
+    import logging
+    _log = logging.getLogger("database.lifecycle")
+
+    if request_id is None:
+        _log.warning("[lifecycle] complete_request_log: request_id is None, skipping")
+        return
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE logs
+        SET response_status = ?, response_body = ?,
+            tokens_sent = ?, tokens_received = ?, latency_ms = ?
+        WHERE id = ?
+    """, (response_status, response_body, tokens_sent, tokens_received, latency_ms, request_id))
+    _log.info(f"[lifecycle] complete_request_log: updated log id={request_id} status={response_status}")
+    timestamp = datetime.now().isoformat()
+    cursor.execute("""
+        INSERT INTO log_events (request_id, stage, timestamp, body, status_code)
+        VALUES (?, 'client_response', ?, ?, ?)
+    """, (request_id, timestamp, response_body, response_status))
+    _log.info(f"[lifecycle] complete_request_log: inserted 'client_response' event for request_id={request_id}")
+    conn.commit()
+    conn.close()
+    enforce_log_limit()
+
+
 def add_log(provider_name, request_method, request_path, request_body, response_status, response_body, tokens_sent=0, tokens_received=0, latency_ms=0):
     limit = get_log_limit()
     if limit == -1:
@@ -287,7 +395,7 @@ def add_log(provider_name, request_method, request_path, request_body, response_
 def enforce_log_limit():
     limit = get_log_limit()
     if limit == -1:
-        # Delete all logs if disabled
+        # Delete all logs if disabled (events cascade via FK)
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM logs")
@@ -302,6 +410,7 @@ def enforce_log_limit():
     count = cursor.fetchone()['count']
     if count > limit:
         to_delete = count - limit
+        # Delete oldest logs; events will be removed via ON DELETE CASCADE
         cursor.execute(f"DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY timestamp ASC LIMIT {to_delete})")
         conn.commit()
     conn.close()
@@ -311,8 +420,18 @@ def get_logs():
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM logs ORDER BY id DESC")
     rows = cursor.fetchall()
+    log_list = [dict(row) for row in rows]
+
+    # Attach lifecycle events to each log
+    for log in log_list:
+        cursor.execute(
+            "SELECT stage, timestamp, body, status_code FROM log_events WHERE request_id = ? ORDER BY id ASC",
+            (log["id"],)
+        )
+        log["events"] = [dict(e) for e in cursor.fetchall()]
+
     conn.close()
-    return [dict(row) for row in rows]
+    return log_list
 def clear_logs():
     """Clear all logs from the database."""
     conn = get_db_connection()

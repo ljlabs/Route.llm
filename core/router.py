@@ -55,6 +55,8 @@ class RouterService:
         Returns:
             JSONResponse or StreamingResponse
         """
+        import database as db
+
         # Extract model from request for model-based routing
         model_name = anthropic_request.get("model")
 
@@ -80,19 +82,26 @@ class RouterService:
                 detail=f"Cannot route chat request to embedding provider '{provider.name}'. Please configure a chat provider as active."
             )
 
+        req_body_str = json.dumps(anthropic_request, indent=2)
+
+        # Stage 1 — log as soon as the request reaches the router
+        request_id = db.start_request_log(
+            provider_name=provider.name,
+            request_method="POST",
+            request_path="/v1/messages",
+            request_body=req_body_str,
+        )
+
         # Apply rate limiting (per-provider if configured, else global)
         await self.per_provider_limiter.wait_for_provider(provider.provider_id, provider.rate_limit_tps)
 
         # Inject max_tokens if client didn't provide one
         if "max_tokens" not in anthropic_request or not anthropic_request.get("max_tokens"):
-            import database as db
             effective_max_tokens = provider.max_tokens or db.get_max_tokens()
             anthropic_request["max_tokens"] = effective_max_tokens
 
         # Wrap request to provider format
         wrapped_request = provider.wrap_request(anthropic_request)
-
-        req_body_str = json.dumps(anthropic_request, indent=2)
 
         try:
             if stream:
@@ -102,7 +111,8 @@ class RouterService:
                     original_request=anthropic_request,
                     req_body_str=req_body_str,
                     path="/v1/messages",
-                    target_format="anthropic"
+                    target_format="anthropic",
+                    request_id=request_id,
                 )
             else:
                 return await self._handle_non_streaming(
@@ -110,12 +120,13 @@ class RouterService:
                     wrapped_request=wrapped_request,
                     original_request=anthropic_request,
                     req_body_str=req_body_str,
-                    path="/v1/messages"
+                    path="/v1/messages",
+                    request_id=request_id,
                 )
         except HTTPException:
             raise
         except httpx.HTTPStatusError as e:
-            await self._handle_http_error(provider, e.response, req_body_str, path="/v1/messages")
+            await self._handle_http_error(provider, e.response, req_body_str, path="/v1/messages", request_id=request_id)
             raise
         except Exception as e:
             logger.error(f"Routing error: {e}", exc_info=True)
@@ -125,7 +136,8 @@ class RouterService:
                 path="/v1/messages",
                 request_body=req_body_str,
                 response_status=500,
-                response_body=str(e)
+                response_body=str(e),
+                request_id=request_id,
             )
             raise HTTPException(status_code=500, detail=str(e) or "Unknown routing error")
 
@@ -144,6 +156,8 @@ class RouterService:
         Returns:
             JSONResponse or StreamingResponse
         """
+        import database as db
+
         # Extract model from request for model-based routing
         model_name = openai_request.get("model")
 
@@ -169,12 +183,21 @@ class RouterService:
                 detail=f"Cannot route chat request to embedding provider '{provider.name}'. Please configure a chat provider as active."
             )
 
+        req_body_str = json.dumps(openai_request, indent=2)
+
+        # Stage 1 — log as soon as the request reaches the router
+        request_id = db.start_request_log(
+            provider_name=provider.name,
+            request_method="POST",
+            request_path="/v1/chat/completions",
+            request_body=req_body_str,
+        )
+
         # Apply rate limiting (per-provider if configured, else global)
         await self.per_provider_limiter.wait_for_provider(provider.provider_id, provider.rate_limit_tps)
 
         # Inject max_tokens if client didn't provide one
         if "max_tokens" not in openai_request or not openai_request.get("max_tokens"):
-            import database as db
             effective_max_tokens = provider.max_tokens or db.get_max_tokens()
             openai_request["max_tokens"] = effective_max_tokens
 
@@ -185,8 +208,6 @@ class RouterService:
         # Wrap request to provider format
         wrapped_request = provider.wrap_request(anthropic_request)
 
-        req_body_str = json.dumps(openai_request, indent=2)
-
         try:
             if stream:
                 return await self._handle_streaming(
@@ -195,7 +216,8 @@ class RouterService:
                     original_request=openai_request,
                     req_body_str=req_body_str,
                     path="/v1/chat/completions",
-                    target_format="openai"
+                    target_format="openai",
+                    request_id=request_id,
                 )
             else:
                 return await self._handle_non_streaming(
@@ -204,12 +226,13 @@ class RouterService:
                     original_request=openai_request,
                     req_body_str=req_body_str,
                     path="/v1/chat/completions",
-                    is_openai_target=True
+                    is_openai_target=True,
+                    request_id=request_id,
                 )
         except HTTPException:
             raise
         except httpx.HTTPStatusError as e:
-            await self._handle_http_error(provider, e.response, req_body_str, path="/v1/chat/completions")
+            await self._handle_http_error(provider, e.response, req_body_str, path="/v1/chat/completions", request_id=request_id)
             raise
         except Exception as e:
             logger.error(f"Routing error: {e}", exc_info=True)
@@ -219,7 +242,8 @@ class RouterService:
                 path="/v1/chat/completions",
                 request_body=req_body_str,
                 response_status=500,
-                response_body=str(e)
+                response_body=str(e),
+                request_id=request_id,
             )
             raise HTTPException(status_code=500, detail=str(e) or "Unknown routing error")
 
@@ -230,10 +254,16 @@ class RouterService:
         original_request: Dict[str, Any],
         req_body_str: str,
         path: str = "/v1/messages",
-        is_openai_target: bool = False
+        is_openai_target: bool = False,
+        request_id: Optional[int] = None,
     ) -> JSONResponse:
         """Handle non-streaming request."""
+        import database as db
         logger.info(f"Routing non-streaming request to {provider.name}")
+
+        # Stage 2 — about to send to provider
+        provider_req_body = json.dumps(wrapped_request, indent=2)
+        db.add_log_event(request_id, stage="provider_request", body=provider_req_body)
 
         start_time = time.perf_counter()
 
@@ -246,9 +276,18 @@ class RouterService:
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
+        # Stage 3 — response received from provider
+        raw_response_text = response.text
+        db.add_log_event(
+            request_id,
+            stage="provider_response",
+            body=raw_response_text,
+            status_code=response.status_code,
+        )
+
         # Handle error responses
         if response.status_code >= 400:
-            await self._handle_http_error(provider, response, req_body_str, path=path)
+            await self._handle_http_error(provider, response, req_body_str, path=path, request_id=request_id)
 
         # Get response data
         try:
@@ -285,17 +324,16 @@ class RouterService:
         else:
             final_response = anthropic_response
 
-        # Log the request
-        self._log_request(
-            provider=provider,
-            method="POST",
-            path=path,
-            request_body=req_body_str,
+        final_response_str = json.dumps(response_json, indent=2)
+
+        # Stage 4 — finalise the log row (also records client_response event)
+        db.complete_request_log(
+            request_id=request_id,
             response_status=response.status_code,
-            response_body=json.dumps(response_json, indent=2),
+            response_body=final_response_str,
             tokens_sent=tokens_sent,
             tokens_received=tokens_received,
-            latency_ms=latency_ms
+            latency_ms=latency_ms,
         )
 
         return JSONResponse(content=final_response, status_code=200)
@@ -385,10 +423,16 @@ class RouterService:
         original_request: Dict[str, Any],
         req_body_str: str,
         path: str = "/v1/messages",
-        target_format: str = "anthropic"
+        target_format: str = "anthropic",
+        request_id: Optional[int] = None,
     ) -> StreamingResponse:
         """Handle streaming request."""
+        import database as db
         logger.info(f"Routing streaming request to {provider.name}")
+
+        # Stage 2 — about to send to provider
+        provider_req_body = json.dumps(wrapped_request, indent=2)
+        db.add_log_event(request_id, stage="provider_request", body=provider_req_body)
 
         # Build streaming request
         request = self.http_client.build_request(
@@ -401,12 +445,20 @@ class RouterService:
         # Send request with streaming
         response = await self.http_client.send(request, stream=True)
 
+        # Stage 3 — first bytes received from provider (headers/status)
+        db.add_log_event(
+            request_id,
+            stage="provider_response",
+            body="[Streaming — body accumulating]",
+            status_code=response.status_code,
+        )
+
         # Handle error responses
         if response.status_code >= 400:
             await response.aread()
             error_text = response.text
             await response.aclose()
-            await self._handle_http_error(provider, response, req_body_str, error_text, path=path)
+            await self._handle_http_error(provider, response, req_body_str, error_text, path=path, request_id=request_id)
 
         # Get stream translator from provider
         stream_translator = provider.get_stream_translator(target_format)
@@ -452,17 +504,16 @@ class RouterService:
                 if tokens_received == 0:
                     tokens_received = self._estimate_response_tokens(accumulated_blocks)
 
-                # Log the completed stream
-                self._log_request(
-                    provider=provider,
-                    method="POST",
-                    path=path,
-                    request_body=req_body_str,
+                final_body = json.dumps(accumulated_blocks, indent=2) if accumulated_blocks else "[Streamed response]"
+
+                # Stage 4 — finalise log row (records client_response event)
+                db.complete_request_log(
+                    request_id=request_id,
                     response_status=200,
-                    response_body=json.dumps(accumulated_blocks, indent=2) if accumulated_blocks else "[Streamed response]",
+                    response_body=final_body,
                     tokens_sent=tokens_sent,
                     tokens_received=tokens_received,
-                    latency_ms=latency_ms
+                    latency_ms=latency_ms,
                 )
 
         return StreamingResponse(
@@ -476,7 +527,8 @@ class RouterService:
         response: httpx.Response,
         req_body_str: str,
         error_text: str = None,
-        path: str = "/v1/messages"
+        path: str = "/v1/messages",
+        request_id: Optional[int] = None,
     ):
         """Handle HTTP error responses."""
         status = response.status_code
@@ -516,7 +568,8 @@ class RouterService:
             path="/v1/messages",
             request_body=req_body_str,
             response_status=status,
-            response_body=error_text or str(error_detail)
+            response_body=error_text or str(error_detail),
+            request_id=request_id,
         )
 
         raise HTTPException(status_code=status, detail=error_detail)
@@ -531,22 +584,38 @@ class RouterService:
         response_body: str,
         tokens_sent: int = 0,
         tokens_received: int = 0,
-        latency_ms: int = 0
+        latency_ms: int = 0,
+        request_id: Optional[int] = None,
     ):
-        """Log the request to database."""
+        """Log the request to database.
+
+        If request_id is provided, complete the existing log row.
+        Otherwise fall back to add_log (legacy path, e.g. error cases
+        that fire before start_request_log was called).
+        """
         try:
             import database as db
-            db.add_log(
-                provider_name=provider.name,
-                request_method=method,
-                request_path=path,
-                request_body=request_body,
-                response_status=response_status,
-                response_body=response_body,
-                tokens_sent=tokens_sent,
-                tokens_received=tokens_received,
-                latency_ms=latency_ms
-            )
+            if request_id is not None:
+                db.complete_request_log(
+                    request_id=request_id,
+                    response_status=response_status,
+                    response_body=response_body,
+                    tokens_sent=tokens_sent,
+                    tokens_received=tokens_received,
+                    latency_ms=latency_ms,
+                )
+            else:
+                db.add_log(
+                    provider_name=provider.name,
+                    request_method=method,
+                    request_path=path,
+                    request_body=request_body,
+                    response_status=response_status,
+                    response_body=response_body,
+                    tokens_sent=tokens_sent,
+                    tokens_received=tokens_received,
+                    latency_ms=latency_ms,
+                )
         except Exception as e:
             logger.error(f"Failed to log request: {e}")
 

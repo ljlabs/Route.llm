@@ -48,9 +48,20 @@ async def test_chat(request: Request):
         # Wrap request to provider format
         wrapped_request = active_prov.wrap_request(test_req)
         
+        req_body_str = json.dumps(test_req, indent=2)
+        provider_req_str = json.dumps(wrapped_request, indent=2)
+
         logger.info(f"Test chat request to {active_prov.name}")
-        logger.debug(f"Wrapped request: {json.dumps(wrapped_request, indent=2)}")
+        logger.debug(f"Wrapped request: {provider_req_str}")
         
+        # Stage 1 — Router received
+        request_id = db.start_request_log(
+            provider_name=active_prov.name,
+            request_method="POST",
+            request_path="/api/chat",
+            request_body=req_body_str,
+        )
+
         # Get HTTP client
         http_client = HTTPClient()
         await http_client.__aenter__()
@@ -60,6 +71,9 @@ async def test_chat(request: Request):
         await rate_limiter.wait()
         
         try:
+            # Stage 2 — About to send to provider
+            db.add_log_event(request_id, stage="provider_request", body=provider_req_str)
+
             # Send request
             response = await http_client.post(
                 active_prov.endpoint_url,
@@ -68,6 +82,14 @@ async def test_chat(request: Request):
             )
             
             logger.debug(f"Response status: {response.status_code}")
+
+            # Stage 3 — Response received from provider
+            db.add_log_event(
+                request_id,
+                stage="provider_response",
+                body=response.text,
+                status_code=response.status_code,
+            )
             
             # Handle non-200 responses
             if response.status_code != 200:
@@ -97,14 +119,11 @@ async def test_chat(request: Request):
                 elif response.status_code == 429:
                     error_detail = f"Rate Limited (429): Too many requests. {error_detail}"
                 
-                # Log error
-                db.add_log(
-                    provider_name=active_prov.name,
-                    request_method="POST",
-                    request_path="/api/chat",
-                    request_body=json.dumps(wrapped_request, indent=2),
+                # Stage 4 — Error response to client
+                db.complete_request_log(
+                    request_id=request_id,
                     response_status=response.status_code,
-                    response_body=response.text
+                    response_body=response.text,
                 )
                 
                 raise HTTPException(status_code=response.status_code, detail=error_detail)
@@ -115,13 +134,10 @@ async def test_chat(request: Request):
             except Exception as json_err:
                 err_msg = f"JSON Decode Error: {str(json_err)}\n\nResponse Text:\n{response.text}"
                 logger.error(err_msg)
-                db.add_log(
-                    provider_name=active_prov.name,
-                    request_method="POST",
-                    request_path="/api/chat",
-                    request_body=json.dumps(wrapped_request, indent=2),
+                db.complete_request_log(
+                    request_id=request_id,
                     response_status=response.status_code,
-                    response_body=err_msg
+                    response_body=err_msg,
                 )
                 raise HTTPException(status_code=500, detail=err_msg)
             
@@ -139,24 +155,18 @@ async def test_chat(request: Request):
             except (KeyError, IndexError, TypeError) as parse_err:
                 err_msg = f"Response Parsing Error: {str(parse_err)}. The provider returned a format we didn't expect."
                 logger.error(err_msg)
-                db.add_log(
-                    provider_name=active_prov.name,
-                    request_method="POST",
-                    request_path="/api/chat",
-                    request_body=json.dumps(wrapped_request, indent=2),
+                db.complete_request_log(
+                    request_id=request_id,
                     response_status=response.status_code,
-                    response_body=json.dumps(response_json, indent=2)
+                    response_body=json.dumps(response_json, indent=2),
                 )
                 raise HTTPException(status_code=500, detail=err_msg)
             
-            # Log successful request
-            db.add_log(
-                provider_name=active_prov.name,
-                request_method="POST",
-                request_path="/api/chat",
-                request_body=json.dumps(wrapped_request, indent=2),
+            # Stage 4 — Successful response to client
+            db.complete_request_log(
+                request_id=request_id,
                 response_status=response.status_code,
-                response_body=json.dumps(response_json, indent=2)
+                response_body=json.dumps(response_json, indent=2),
             )
             
             return {

@@ -1275,3 +1275,148 @@ body {
     align-self: flex-start;
     margin-top: 8px;
 }
+
+/* ─── Shimmer / Skeleton Loading ─── */
+@keyframes shimmer-sweep {
+    0%   { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+}
+
+.shimmer {
+    background: linear-gradient(
+        90deg,
+        rgba(255,255,255,0.04) 25%,
+        rgba(255,255,255,0.10) 50%,
+        rgba(255,255,255,0.04) 75%
+    );
+    background-size: 800px 100%;
+    animation: shimmer-sweep 1.4s infinite linear;
+    border-radius: 6px;
+}
+
+/* Skeleton log entry — mirrors .log-entry layout */
+.skeleton-log-entry {
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.skeleton-line {
+    height: 12px;
+    border-radius: 4px;
+}
+
+.skeleton-line.short  { width: 40%; }
+.skeleton-line.medium { width: 65%; }
+.skeleton-line.long   { width: 90%; }
+
+/* Skeleton provider card */
+.skeleton-provider-card {
+    padding: 24px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 180px;
+}
+
+/* Skeleton metrics chart box */
+.skeleton-chart {
+    height: 250px;
+    border-radius: 8px;
+}
+
+/* Skeleton table row */
+.skeleton-table-row td {
+    padding: 16px;
+}
+
+/* ─── Log lifecycle timeline ─── */
+.log-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin-top: 4px;
+}
+
+.timeline-stage {
+    display: flex;
+    gap: 12px;
+    position: relative;
+}
+
+.timeline-stage:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    left: 15px;
+    top: 32px;
+    bottom: -4px;
+    width: 2px;
+    background: var(--border-color);
+}
+
+.timeline-dot {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-top: 4px;
+    z-index: 1;
+}
+
+.timeline-dot.stage-router_received   { background: rgba(99,102,241,0.2); color: #818cf8; border: 1px solid rgba(99,102,241,0.4); }
+.timeline-dot.stage-provider_request  { background: rgba(234,179,8,0.15); color: #fbbf24; border: 1px solid rgba(234,179,8,0.35); }
+.timeline-dot.stage-provider_response { background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.35); }
+.timeline-dot.stage-client_response   { background: rgba(99,102,241,0.2); color: #818cf8; border: 1px solid rgba(99,102,241,0.4); }
+
+.timeline-body {
+    flex: 1;
+    padding-bottom: 16px;
+}
+
+.timeline-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 4px;
+}
+
+.timeline-stage-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.stage-router_received   .timeline-stage-name { color: #818cf8; }
+.stage-provider_request  .timeline-stage-name { color: #fbbf24; }
+.stage-provider_response .timeline-stage-name { color: #34d399; }
+.stage-client_response   .timeline-stage-name { color: #818cf8; }
+
+.timeline-time {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+}
+
+.timeline-status {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    margin-left: 8px;
+}
+
+.timeline-status.ok  { background: rgba(16,185,129,0.2); color: var(--success); }
+.timeline-status.err { background: rgba(239,68,68,0.2); color: var(--danger); }
+.timeline-status.pending { background: rgba(234,179,8,0.15); color: #fbbf24; }

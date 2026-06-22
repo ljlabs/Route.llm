@@ -3,3 +3,5 @@
 **/venv/*
 .tmp_workspace/*
 load_test/output/*
+scripts/providers.json
+scripts/model_mappings.json

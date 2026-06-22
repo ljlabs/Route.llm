@@ -117,6 +117,9 @@ function toggleKeyVisibility() {
 
 // Fetch and Render Providers
 async function fetchProviders() {
+    const container = document.getElementById("providers-list");
+    // Show shimmer while loading
+    container.innerHTML = skeletonProviderCards(3);
     try {
         const [providersRes, metricsRes] = await Promise.all([
             fetch("/api/providers"),
@@ -144,6 +147,7 @@ async function fetchProviders() {
         }
     } catch (err) {
         console.error("Error fetching providers/metrics:", err);
+        container.innerHTML = `<div class="glass-panel" style="grid-column:1/-1;text-align:center;color:var(--text-secondary);">Failed to load providers.</div>`;
     }
 }
 
@@ -374,13 +378,69 @@ async function saveSettings() {
 // Logs fetching and inspection
 let allLogs = [];
 
+// ─── Shimmer skeleton helpers ───────────────────────────────────────────────
+
+function skeletonLogEntries(count = 4) {
+    return Array.from({ length: count }, () => `
+        <div class="skeleton-log-entry">
+            <div style="display:flex;justify-content:space-between;">
+                <div class="skeleton-line short shimmer"></div>
+                <div class="skeleton-line short shimmer" style="width:30%;"></div>
+            </div>
+            <div class="skeleton-line medium shimmer"></div>
+            <div class="skeleton-line short shimmer" style="width:20%;"></div>
+        </div>
+    `).join("");
+}
+
+function skeletonProviderCards(count = 2) {
+    return Array.from({ length: count }, () => `
+        <div class="skeleton-provider-card">
+            <div style="display:flex;justify-content:space-between;">
+                <div class="skeleton-line medium shimmer" style="height:18px;"></div>
+                <div class="skeleton-line shimmer" style="width:60px;height:18px;"></div>
+            </div>
+            <div class="skeleton-line long shimmer"></div>
+            <div class="skeleton-line medium shimmer"></div>
+            <div class="skeleton-line long shimmer"></div>
+            <div class="skeleton-line medium shimmer"></div>
+            <div style="display:flex;gap:8px;margin-top:4px;">
+                <div class="skeleton-line shimmer" style="width:80px;height:32px;border-radius:6px;"></div>
+                <div class="skeleton-line shimmer" style="width:60px;height:32px;border-radius:6px;"></div>
+            </div>
+        </div>
+    `).join("");
+}
+
+function skeletonRoutingRows(count = 3) {
+    return Array.from({ length: count }, () => `
+        <tr class="skeleton-table-row">
+            <td><div class="skeleton-line medium shimmer" style="height:14px;"></div></td>
+            <td><div class="skeleton-line short shimmer" style="height:14px;"></div></td>
+            <td><div class="skeleton-line shimmer" style="width:60px;height:28px;border-radius:6px;"></div></td>
+        </tr>
+    `).join("");
+}
+
+function skeletonMetrics() {
+    return `
+        <div class="skeleton-chart shimmer"></div>
+    `;
+}
+
+// ─── fetchLogs with shimmer ──────────────────────────────────────────────────
+
 async function fetchLogs() {
+    const historyContainer = document.getElementById("logs-history");
+    // Show shimmer while loading
+    historyContainer.innerHTML = skeletonLogEntries(5);
     try {
         const res = await fetch("/api/logs");
         allLogs = await res.json();
         renderLogsList();
     } catch (err) {
         console.error(err);
+        historyContainer.innerHTML = `<div style="text-align:center;color:var(--text-secondary);margin-top:20px;">Failed to load logs.</div>`;
     }
 }
 
@@ -397,9 +457,16 @@ function renderLogsList() {
     allLogs.forEach((log, index) => {
         const time = new Date(log.timestamp).toLocaleTimeString();
         const date = new Date(log.timestamp).toLocaleDateString();
+        const isPending = !log.response_status || log.response_status === 0;
         const entry = document.createElement("div");
         entry.className = "log-entry";
         entry.onclick = () => showLogDetail(index, entry);
+
+        const stageCount = (log.events || []).length;
+        const stageLabel = isPending
+            ? `<span class="log-status timeline-status pending">⏳ stage ${stageCount}/4</span>`
+            : `<span class="log-status ${log.response_status < 400 ? 'status-success' : 'status-error'}">${log.response_status}</span>`;
+
         entry.innerHTML = `
             <div class="log-meta">
                 <span>${date} ${time}</span>
@@ -407,9 +474,7 @@ function renderLogsList() {
             </div>
             <div class="log-path">${log.request_method} ${log.request_path}</div>
             <div style="margin-top: 4px; display: flex; justify-content: space-between; align-items: center;">
-                <span class="log-status ${log.response_status < 400 ? 'status-success' : 'status-error'}">
-                    ${log.response_status}
-                </span>
+                ${stageLabel}
             </div>
         `;
         historyContainer.appendChild(entry);
@@ -426,6 +491,7 @@ function showLogDetail(index, element) {
 
     // Pretty print json helper
     const formatJSON = (val) => {
+        if (!val) return "(empty)";
         try {
             return JSON.stringify(JSON.parse(val), null, 2);
         } catch {
@@ -463,12 +529,21 @@ function showLogDetail(index, element) {
         return wrapper;
     };
 
+    // Stage display metadata
+    const STAGE_META = {
+        router_received:   { label: "1 · Router Received",       icon: "R" },
+        provider_request:  { label: "2 · Sent to Provider",      icon: "→" },
+        provider_response: { label: "3 · Provider Response",     icon: "←" },
+        client_response:   { label: "4 · Response to Client",    icon: "C" },
+    };
+
     // Build detail content
     const contentDiv = document.createElement("div");
     contentDiv.className = "log-detail-content";
     contentDiv.style.marginTop = "16px";
 
     // General Details
+    const isPending = !log.response_status || log.response_status === 0;
     const generalSection = document.createElement("div");
     generalSection.className = "detail-section";
     generalSection.innerHTML = `<h4>General Details</h4>
@@ -476,23 +551,95 @@ function showLogDetail(index, element) {
             <div><span>Timestamp:</span> <span class="val">${new Date(log.timestamp).toLocaleString()}</span></div>
             <div><span>Provider:</span> <span class="val">${log.provider_name}</span></div>
             <div><span>Method / Path:</span> <span class="val">${log.request_method} ${log.request_path}</span></div>
-            <div><span>Status Code:</span> <span class="val">${log.response_status}</span></div>
+            <div><span>Status Code:</span> <span class="val">${isPending ? '⏳ in progress' : log.response_status}</span></div>
+            ${log.latency_ms ? `<div><span>Latency:</span> <span class="val">${log.latency_ms} ms</span></div>` : ''}
+            ${log.tokens_sent ? `<div><span>Tokens (sent / recv):</span> <span class="val">${log.tokens_sent} / ${log.tokens_received}</span></div>` : ''}
         </div>`;
     contentDiv.appendChild(generalSection);
 
-    // Request Body
-    const reqSection = document.createElement("div");
-    reqSection.className = "detail-section";
-    reqSection.innerHTML = `<h4>Request Body</h4>`;
-    reqSection.appendChild(collapsiblePre(formatJSON(log.request_body)));
-    contentDiv.appendChild(reqSection);
+    // Lifecycle Timeline
+    const events = log.events || [];
+    if (events.length > 0) {
+        const timelineSection = document.createElement("div");
+        timelineSection.className = "detail-section";
+        timelineSection.innerHTML = `<h4>Request Lifecycle</h4>`;
 
-    // Response Body
-    const resSection = document.createElement("div");
-    resSection.className = "detail-section";
-    resSection.innerHTML = `<h4>Response Body</h4>`;
-    resSection.appendChild(collapsiblePre(formatJSON(log.response_body)));
-    contentDiv.appendChild(resSection);
+        const timeline = document.createElement("div");
+        timeline.className = "log-timeline";
+
+        events.forEach(evt => {
+            const meta = STAGE_META[evt.stage] || { label: evt.stage, icon: "•" };
+            const time = new Date(evt.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+
+            let statusBadge = "";
+            if (evt.status_code != null) {
+                const cls = evt.status_code < 400 ? "ok" : "err";
+                statusBadge = `<span class="timeline-status ${cls}">${evt.status_code}</span>`;
+            } else if (isPending && evt.stage === events[events.length - 1].stage) {
+                statusBadge = `<span class="timeline-status pending">pending</span>`;
+            }
+
+            const stageEl = document.createElement("div");
+            stageEl.className = `timeline-stage ${evt.stage}`;
+            stageEl.innerHTML = `
+                <div class="timeline-dot stage-${evt.stage}">${meta.icon}</div>
+                <div class="timeline-body">
+                    <div class="timeline-header">
+                        <span class="timeline-stage-name">${meta.label}${statusBadge}</span>
+                        <span class="timeline-time">${time}</span>
+                    </div>
+                </div>
+            `;
+
+            // Attach collapsible body if there's content
+            if (evt.body && evt.body.trim()) {
+                const bodyWrapper = stageEl.querySelector(".timeline-body");
+                const bodySection = document.createElement("div");
+                bodySection.className = "detail-section";
+                bodySection.style.marginTop = "6px";
+                bodySection.appendChild(collapsiblePre(formatJSON(evt.body)));
+                bodyWrapper.appendChild(bodySection);
+            }
+
+            timeline.appendChild(stageEl);
+        });
+
+        // If pending, add a placeholder for remaining stages
+        const knownStages = ["router_received", "provider_request", "provider_response", "client_response"];
+        const doneStages = new Set(events.map(e => e.stage));
+        knownStages.filter(s => !doneStages.has(s)).forEach(s => {
+            const meta = STAGE_META[s] || { label: s, icon: "•" };
+            const stageEl = document.createElement("div");
+            stageEl.className = `timeline-stage ${s}`;
+            stageEl.style.opacity = "0.35";
+            stageEl.innerHTML = `
+                <div class="timeline-dot stage-${s}">${meta.icon}</div>
+                <div class="timeline-body">
+                    <div class="timeline-header">
+                        <span class="timeline-stage-name">${meta.label}</span>
+                        <span class="timeline-time">waiting…</span>
+                    </div>
+                </div>
+            `;
+            timeline.appendChild(stageEl);
+        });
+
+        timelineSection.appendChild(timeline);
+        contentDiv.appendChild(timelineSection);
+    } else {
+        // Legacy log — no events, fall back to flat view
+        const reqSection = document.createElement("div");
+        reqSection.className = "detail-section";
+        reqSection.innerHTML = `<h4>Request Body</h4>`;
+        reqSection.appendChild(collapsiblePre(formatJSON(log.request_body)));
+        contentDiv.appendChild(reqSection);
+
+        const resSection = document.createElement("div");
+        resSection.className = "detail-section";
+        resSection.innerHTML = `<h4>Response Body</h4>`;
+        resSection.appendChild(collapsiblePre(formatJSON(log.response_body)));
+        contentDiv.appendChild(resSection);
+    }
 
     detailPane.innerHTML = `<h3>Log Inspector</h3>`;
     detailPane.appendChild(contentDiv);
@@ -701,12 +848,15 @@ async function sendEmbeddingRequest() {
 
 // Model Routing Management
 async function fetchRouting() {
+    const container = document.getElementById("routing-mappings-list");
+    container.innerHTML = skeletonRoutingRows(3);
     try {
         const res = await fetch("/api/routing");
         const mappings = await res.json();
         renderRouting(mappings);
     } catch (err) {
         console.error("Error fetching routing mappings:", err);
+        container.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--text-secondary);padding:20px;">Failed to load routing mappings.</td></tr>`;
     }
 }
 
@@ -830,6 +980,21 @@ function getProviderColor(name, opacity = 1) {
 }
 
 async function updateMetricsCharts() {
+    // Show shimmer in each chart container while loading
+    ["chart-latency-history", "chart-requests", "chart-tokens", "chart-latency"].forEach(id => {
+        const canvas = document.getElementById(id);
+        if (canvas) {
+            const parent = canvas.parentElement;
+            if (parent) {
+                parent.innerHTML = skeletonMetrics();
+                // Restore canvas so Chart.js can redraw after data arrives
+                const newCanvas = document.createElement("canvas");
+                newCanvas.id = id;
+                parent.appendChild(newCanvas);
+            }
+        }
+    });
+
     try {
         const [summaryRes, historyRes] = await Promise.all([
             fetch("/api/metrics"),
