@@ -72,6 +72,13 @@ class RouterService:
                 status_code=400,
                 detail="No active provider configured"
             )
+        
+        # Validate provider type: chat requests cannot go to embedding providers
+        if provider.api_type and "embedding" in provider.api_type.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot route chat request to embedding provider '{provider.name}'. Please configure a chat provider as active."
+            )
 
         # Apply rate limiting (per-provider if configured, else global)
         await self.per_provider_limiter.wait_for_provider(provider.provider_id, provider.rate_limit_tps)
@@ -153,6 +160,13 @@ class RouterService:
             raise HTTPException(
                 status_code=400,
                 detail="No active provider configured"
+            )
+        
+        # Validate provider type: chat requests cannot go to embedding providers
+        if provider.api_type and "embedding" in provider.api_type.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot route chat request to embedding provider '{provider.name}'. Please configure a chat provider as active."
             )
 
         # Apply rate limiting (per-provider if configured, else global)

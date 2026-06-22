@@ -1,14 +1,16 @@
 """
 Mock OpenAI-Compatible Server
 
-A lightweight FastAPI server that mimics an OpenAI chat completions endpoint.
-Returns configurable generated text for every request.
+A lightweight FastAPI server that mimics an OpenAI chat completions endpoint
+and an OpenAI-compatible embeddings endpoint.
+Returns configurable generated text / embedding vectors for every request.
 """
 
 import asyncio
 import time
 import uuid
 import argparse
+import math
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -19,12 +21,14 @@ app = FastAPI(title="Mock OpenAI Server")
 _stats = {
     "total_requests": 0,
     "total_errors": 0,
+    "embedding_requests": 0,
     "start_time": None,
 }
 
 # Configuration (set via CLI args)
 response_latency_ms = 50
 response_tokens = 50
+embedding_dims = 768
 
 
 def generate_text(num_tokens: int) -> str:
@@ -108,6 +112,66 @@ async def list_models():
     })
 
 
+def generate_embedding(text: str, dims: int) -> list:
+    """Generate a deterministic unit-normalised mock embedding vector."""
+    # Use a simple hash-based seed so identical inputs get identical vectors
+    seed = hash(text) & 0xFFFFFFFF
+    vector = []
+    for i in range(dims):
+        # Pseudo-random via linear congruential step
+        seed = (seed * 1664525 + 1013904223) & 0xFFFFFFFF
+        vector.append((seed / 0xFFFFFFFF) * 2 - 1)
+    # L2-normalise
+    magnitude = math.sqrt(sum(v * v for v in vector)) or 1.0
+    return [round(v / magnitude, 8) for v in vector]
+
+
+@app.post("/v1/embeddings")
+async def embeddings(request: Request):
+    _stats["total_requests"] += 1
+    _stats["embedding_requests"] += 1
+
+    try:
+        body = await request.json()
+    except Exception:
+        _stats["total_errors"] += 1
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
+
+    raw_input = body.get("input", "")
+    model = body.get("model", "mock-embedding-model")
+
+    # Simulate latency
+    if response_latency_ms > 0:
+        await asyncio.sleep(response_latency_ms / 1000.0)
+
+    # Normalise input to a list of strings
+    if isinstance(raw_input, str):
+        inputs = [raw_input]
+    else:
+        inputs = list(raw_input)
+
+    data = [
+        {
+            "object": "embedding",
+            "index": i,
+            "embedding": generate_embedding(text, embedding_dims),
+        }
+        for i, text in enumerate(inputs)
+    ]
+
+    prompt_tokens = sum(max(1, len(t.split())) for t in inputs)
+
+    return JSONResponse(content={
+        "object": "list",
+        "data": data,
+        "model": model,
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "total_tokens": prompt_tokens,
+        },
+    })
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -124,22 +188,25 @@ async def stats():
 
 
 def main():
-    global response_latency_ms, response_tokens, _stats
+    global response_latency_ms, response_tokens, embedding_dims, _stats
 
     parser = argparse.ArgumentParser(description="Mock OpenAI-Compatible Server")
     parser.add_argument("--port", type=int, default=9001)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--latency-ms", type=int, default=50, help="Simulated response latency in ms")
     parser.add_argument("--tokens", type=int, default=50, help="Approximate response tokens")
+    parser.add_argument("--embedding-dims", type=int, default=768, help="Embedding vector dimensions")
     args = parser.parse_args()
 
     response_latency_ms = args.latency_ms
     response_tokens = args.tokens
+    embedding_dims = args.embedding_dims
     _stats["start_time"] = time.time()
 
     print(f"Mock OpenAI Server starting on {args.host}:{args.port}")
     print(f"  Response latency: {response_latency_ms}ms")
     print(f"  Response tokens: {response_tokens}")
+    print(f"  Embedding dims: {embedding_dims}")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 

@@ -5,7 +5,7 @@ Run this if tests were interrupted and servers are still running.
 import subprocess
 import sys
 
-PORTS = [8081]
+PORTS = [8000, 8081, 9001]
 
 def kill_port(port):
     result = subprocess.run(

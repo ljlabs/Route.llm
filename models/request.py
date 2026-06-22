@@ -5,7 +5,7 @@ Pydantic models for API request validation.
 """
 
 from typing import Optional, List, Any, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Message(BaseModel):
@@ -14,11 +14,26 @@ class Message(BaseModel):
     content: Union[str, List[Any]] = Field(..., description="Message content")
 
 
-class Tool(BaseModel):
-    """Tool/function definition."""
-    name: str = Field(..., description="Tool name")
-    description: str = Field(default="", description="Tool description")
-    input_schema: dict = Field(default={}, description="JSON schema for tool input")
+class FlexibleTool(BaseModel):
+    """Tool definition that accepts both OpenAI and Anthropic formats."""
+    # OpenAI format fields
+    type: Optional[str] = Field(default="function", description="Tool type")
+    function: Optional[dict] = Field(default=None, description="Function definition (OpenAI format)")
+    # Anthropic format fields
+    name: Optional[str] = Field(default=None, description="Tool name")
+    description: Optional[str] = Field(default="", description="Tool description")
+    input_schema: Optional[dict] = Field(default=None, description="JSON schema for tool input")
+    
+    @model_validator(mode='after')
+    def normalize_openai_format(self):
+        """Normalize OpenAI format to Anthropic-compatible format."""
+        if self.function and not self.name:
+            self.name = self.function.get('name')
+            if not self.description or self.description == "":
+                self.description = self.function.get('description', "")
+            if not self.input_schema:
+                self.input_schema = self.function.get('parameters', {})
+        return self
 
 
 class AnthropicRequest(BaseModel):
@@ -26,7 +41,7 @@ class AnthropicRequest(BaseModel):
     model: str = Field(..., description="Model identifier")
     messages: List[Message] = Field(..., description="Chat messages")
     system: Optional[Union[str, List[Any]]] = Field(default=None, description="System prompt")
-    tools: Optional[List[Tool]] = Field(default=None, description="Available tools")
+    tools: Optional[List[FlexibleTool]] = Field(default=None, description="Available tools")
     max_tokens: int = Field(default=4096, description="Maximum tokens to generate")
     temperature: Optional[float] = Field(default=None, description="Sampling temperature")
     top_p: Optional[float] = Field(default=None, description="Nucleus sampling parameter")
@@ -37,7 +52,7 @@ class OpenAIRequest(BaseModel):
     """OpenAI /v1/chat/completions API request model."""
     model: str = Field(..., description="Model identifier")
     messages: List[Message] = Field(..., description="Chat messages")
-    tools: Optional[List[Tool]] = Field(default=None, description="Available tools")
+    tools: Optional[List[FlexibleTool]] = Field(default=None, description="Available tools")
     max_tokens: Optional[int] = Field(default=None, description="Maximum tokens to generate")
     temperature: Optional[float] = Field(default=None, description="Sampling temperature")
     top_p: Optional[float] = Field(default=None, description="Nucleus sampling parameter")
