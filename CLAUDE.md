@@ -44,15 +44,17 @@ start_server.bat
 
 - **`main.py`** — FastAPI app, all route handlers, proxy logic, SSE stream translation (`stream_generator()` ~250 lines handles the complex streaming state machine)
 - **`translator.py`** — Protocol translation functions (request and response conversion between Anthropic ↔ OpenAI formats)
+- **`core/translation/stream_base.py`** — SSE stream translators (passthrough, Anthropic↔OpenAI bidirectional)
+- **`core/translation/response_schemas.py`** — Pydantic validation schemas for Anthropic and OpenAI SSE events
 - **`database.py`** — SQLite layer for providers, settings, and request logs
-- **`test_proxy.py`** — Pytest unit tests for translator and database
+- **`tests/test_response_schemas.py`** — Schema validation tests for both API formats
 - **`static/`** — Single-page dashboard app (providers CRUD, request logs, chat testbed)
 - **`proxy.db`** — Runtime SQLite database (gitignored)
 
 ### Database Schema (SQLite, `proxy.db`)
 
 - `providers` — id, name, api_type (`"openai"` | `"anthropic"`), endpoint_url, api_key, model_name, is_active
-- `settings` — key-value pairs (default: `log_limit` = 50; set to `-1` to disable logging)
+- `settings` — key-value pairs (default: `log_limit` = 50; set to `-1` to disable logging, `response_format` = `"anthropic"` or `"openai"`)
 - `logs` — request/response audit log with timestamp, provider, method, path, body, status, response
 
 ### API Endpoints
@@ -66,7 +68,7 @@ start_server.bat
 - `PUT /api/providers/{id}` — update provider
 - `DELETE /api/providers/{id}` — delete provider
 - `POST /api/providers/{id}/active` — set active provider
-- `GET/POST /api/settings` — get/set settings
+- `GET/POST /api/settings` — get/set settings (includes `response_format`: `"anthropic"` or `"openai"`)
 - `GET/DELETE /api/logs` — get/clear request logs
 - `POST /api/chat` — test chat from dashboard
 

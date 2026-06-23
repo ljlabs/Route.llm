@@ -40,6 +40,11 @@ class StreamTranslator(ABC):
 class PassthroughStreamTranslator(StreamTranslator):
     """Pass-through translator when no translation is needed."""
     
+    def __init__(self, validate_format: Optional[str] = None):
+        self.validate_format = validate_format
+        self.validation_warnings = []
+        self.validation_checked = 0
+
     async def translate_stream(
         self, 
         response, 
@@ -47,38 +52,54 @@ class PassthroughStreamTranslator(StreamTranslator):
         accumulated_blocks: list
     ) -> Generator[str, None, None]:
         """No translation needed - pass through the stream as-is."""
+        from .response_schemas import validate_anthropic_sse_line, validate_openai_sse_line
         try:
             async for line in response.aiter_lines():
-                if line:
-                    yield line + "\n"
-                    
-                    # Still accumulate blocks for logging
-                    if line.startswith("data:"):
-                        data_content = line.replace("data:", "").strip()
-                        if data_content and data_content != "[DONE]":
-                            try:
-                                data = json.loads(data_content)
-                                # Try to accumulate content
-                                if provider_config.get("api_type") == "anthropic":
-                                    if data.get("type") == "content_block_delta":
-                                        text = data.get("delta", {}).get("text", "")
-                                        if len(accumulated_blocks) <= 0:
-                                            accumulated_blocks.append({"type": "text", "text": ""})
-                                        accumulated_blocks[0]["text"] += text
-                                else:
-                                    text = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                                    if text:
-                                        if len(accumulated_blocks) <= 0:
-                                            accumulated_blocks.append({"type": "text", "text": ""})
-                                        accumulated_blocks[0]["text"] += text
-                            except Exception:
-                                pass
+                yield line + "\n"
+                
+                # Validate output format if configured
+                if self.validate_format and line:
+                    if self.validate_format == "anthropic" and line.startswith("data:"):
+                        self.validation_checked += 1
+                        if not validate_anthropic_sse_line(line):
+                            self.validation_warnings.append(line[:120])
+                    elif self.validate_format == "openai" and line.startswith("data:"):
+                        self.validation_checked += 1
+                        if not validate_openai_sse_line(line):
+                            self.validation_warnings.append(line[:120])
+                
+                # Still accumulate blocks for logging
+                if line and line.startswith("data:"):
+                    data_content = line.replace("data:", "").strip()
+                    if data_content and data_content != "[DONE]":
+                        try:
+                            data = json.loads(data_content)
+                            # Try to accumulate content
+                            if provider_config.get("api_type") == "anthropic":
+                                if data.get("type") == "content_block_delta":
+                                    text = data.get("delta", {}).get("text", "")
+                                    if len(accumulated_blocks) <= 0:
+                                        accumulated_blocks.append({"type": "text", "text": ""})
+                                    accumulated_blocks[0]["text"] += text
+                            else:
+                                text = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                if text:
+                                    if len(accumulated_blocks) <= 0:
+                                        accumulated_blocks.append({"type": "text", "text": ""})
+                                    accumulated_blocks[0]["text"] += text
+                        except Exception:
+                            pass
         finally:
             await response.aclose()
 
 
 class AnthropicToOpenAIStreamTranslator(StreamTranslator):
     """Translates OpenAI SSE stream to Anthropic SSE format."""
+    
+    def __init__(self, validate_format: Optional[str] = None):
+        self.validate_format = validate_format
+        self.validation_warnings = []
+        self.validation_checked = 0
     
     async def translate_stream(
         self, 
@@ -87,6 +108,7 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
         accumulated_blocks: list
     ) -> Generator[str, None, None]:
         """Translate OpenAI streaming response to Anthropic format."""
+        from .response_schemas import validate_anthropic_sse_line
         sent_start = False
         tool_idx_map = {}
         next_anth_block_idx = 1
@@ -112,7 +134,7 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                         if not sent_start:
                             msg_id = data.get("id", f"msg_local_{os.urandom(8).hex()}")
                             model_name = data.get("model", provider_config.get("model_name", ""))
-                            yield f"event: message_start\ndata: " + json.dumps({
+                            msg_start_data = {
                                 "type": "message_start",
                                 "message": {
                                     "id": msg_id,
@@ -124,14 +146,24 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                                     "stop_sequence": None,
                                     "usage": {"input_tokens": 0, "output_tokens": 0}
                                 }
-                            }) + "\n\n"
+                            }
+                            if self.validate_format == "anthropic":
+                                self.validation_checked += 1
+                                if not validate_anthropic_sse_line("data: " + json.dumps(msg_start_data)):
+                                    self.validation_warnings.append("message_start")
+                            yield f"event: message_start\ndata: " + json.dumps(msg_start_data) + "\n\n"
                             
                             # Start default text content block at index 0
-                            yield f"event: content_block_start\ndata: " + json.dumps({
+                            cb_start_data = {
                                 "type": "content_block_start",
                                 "index": 0,
                                 "content_block": {"type": "text", "text": ""}
-                            }) + "\n\n"
+                            }
+                            if self.validate_format == "anthropic":
+                                self.validation_checked += 1
+                                if not validate_anthropic_sse_line("data: " + json.dumps(cb_start_data)):
+                                    self.validation_warnings.append("content_block_start")
+                            yield f"event: content_block_start\ndata: " + json.dumps(cb_start_data) + "\n\n"
                             sent_start = True
                         
                         # Yield standard text content chunk
@@ -142,11 +174,16 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                                 accumulated_blocks.append({"type": "text", "text": ""})
                             accumulated_blocks[0]["text"] += text
                             
-                            yield f"event: content_block_delta\ndata: " + json.dumps({
+                            cb_delta_data = {
                                 "type": "content_block_delta",
                                 "index": 0,
                                 "delta": {"type": "text_delta", "text": text}
-                            }) + "\n\n"
+                            }
+                            if self.validate_format == "anthropic":
+                                self.validation_checked += 1
+                                if not validate_anthropic_sse_line("data: " + json.dumps(cb_delta_data)):
+                                    self.validation_warnings.append("content_block_delta")
+                            yield f"event: content_block_delta\ndata: " + json.dumps(cb_delta_data) + "\n\n"
                             
                         # Yield tool calls chunks if present
                         tool_calls = delta.get("tool_calls", [])

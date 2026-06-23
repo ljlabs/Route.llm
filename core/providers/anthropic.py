@@ -32,11 +32,11 @@ class AnthropicProvider(BaseProvider):
             "Content-Type": "application/json"
         }
     
-    def get_stream_translator(self, target_format: str = "anthropic"):
+    def get_stream_translator(self, target_format: str = "anthropic", validate_format: str = None):
         """Get stream translator for this provider."""
         if target_format == "openai":
             return OpenAIToAnthropicStreamTranslator()
-        return PassthroughStreamTranslator()
+        return PassthroughStreamTranslator(validate_format=validate_format)
     
     def requires_translation(self) -> bool:
         """Anthropic doesn't require translation when talking to Anthropic API."""

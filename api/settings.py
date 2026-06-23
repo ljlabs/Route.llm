@@ -23,7 +23,8 @@ async def get_settings():
         return {
             "log_limit": db.get_log_limit(),
             "rate_limit_tps": db.get_rate_limit_tps(),
-            "max_tokens": db.get_max_tokens()
+            "max_tokens": db.get_max_tokens(),
+            "response_format": db.get_response_format()
         }
     except Exception as e:
         logger.error(f"Failed to get settings: {e}")
@@ -54,6 +55,11 @@ async def set_settings(settings: SettingsRequest):
         if settings.max_tokens is not None:
             db.set_max_tokens(settings.max_tokens)
             logger.info(f"Max tokens updated to {settings.max_tokens}")
+
+        # Update response format if provided
+        if settings.response_format is not None:
+            db.set_response_format(settings.response_format)
+            logger.info(f"Response format updated to {settings.response_format}")
 
         return {"status": "success", "message": "Settings updated"}
     except ValueError as e:

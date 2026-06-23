@@ -5,9 +5,9 @@ Implements per-provider token bucket rate limiting.
 Each provider gets its own independent rate limiter instance.
 """
 
-import asyncio
 import time
 import logging
+import anyio
 import database as db
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class RateLimiter:
         self.tps = tps
         self.interval = 1.0 / tps if tps > 0 else 0
         self.last_request_time = 0
-        self.lock = asyncio.Lock()
+        self.lock = anyio.Lock()
 
     def set_rate(self, tps: float):
         self.tps = tps
@@ -42,7 +42,7 @@ class RateLimiter:
             if elapsed < self.interval:
                 wait_time = self.interval - elapsed
                 logger.debug(f"Rate limiting: waiting {wait_time:.3f}s (TPS: {self.tps})")
-                await asyncio.sleep(wait_time)
+                await anyio.sleep(wait_time)
                 self.last_request_time = time.time()
             else:
                 self.last_request_time = now

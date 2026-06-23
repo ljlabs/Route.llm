@@ -67,6 +67,7 @@ class SettingsResponse(BaseModel):
     log_limit: int
     rate_limit_tps: float
     max_tokens: int
+    response_format: str = "anthropic"
 
 
 class LogEntry(BaseModel):

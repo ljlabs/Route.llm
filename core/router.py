@@ -461,7 +461,8 @@ class RouterService:
             await self._handle_http_error(provider, response, req_body_str, error_text, path=path, request_id=request_id)
 
         # Get stream translator from provider
-        stream_translator = provider.get_stream_translator(target_format)
+        response_format = db.get_response_format()
+        stream_translator = provider.get_stream_translator(target_format, validate_format=response_format)
 
         # Provider config for the translator
         provider_config = {
@@ -505,6 +506,28 @@ class RouterService:
                     tokens_received = self._estimate_response_tokens(accumulated_blocks)
 
                 final_body = json.dumps(accumulated_blocks, indent=2) if accumulated_blocks else "[Streamed response]"
+
+                # Log SSE validation results
+                if hasattr(stream_translator, 'validation_checked') and stream_translator.validation_checked > 0:
+                    validation_body = json.dumps({
+                        "format": response_format,
+                        "events_checked": stream_translator.validation_checked,
+                        "warnings": stream_translator.validation_warnings,
+                        "status": "pass" if not stream_translator.validation_warnings else "fail"
+                    })
+                    db.add_log_event(
+                        request_id,
+                        stage="sse_validation",
+                        body=validation_body,
+                        status_code=200 if not stream_translator.validation_warnings else 422,
+                    )
+                    if stream_translator.validation_warnings:
+                        logger.warning(
+                            "SSE_VALIDATION: %d warnings for %s format on %s",
+                            len(stream_translator.validation_warnings),
+                            response_format,
+                            path,
+                        )
 
                 # Stage 4 — finalise log row (records client_response event)
                 db.complete_request_log(

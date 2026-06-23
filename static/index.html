@@ -361,6 +361,14 @@
                 </div>
                 <p class="subtitle" style="margin-top: 8px;">Default max tokens when providers don't specify their own. Set to 32000 to match Claude Code.</p>
             </div>
+            <div class="form-group">
+                <label for="global-response-format">Expected Response Format</label>
+                <select id="global-response-format" class="form-control">
+                    <option value="anthropic">Anthropic (Messages API /v1/messages)</option>
+                    <option value="openai">OpenAI (Chat Completions /v1/chat/completions)</option>
+                </select>
+                <p class="subtitle" style="margin-top: 8px;">Validates streaming SSE events against the chosen schema. Mismatches are logged as warnings.</p>
+            </div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeGlobalSettingsModal()">Cancel</button>
                 <button type="button" class="btn btn-primary" onclick="saveGlobalRateLimit()">Save Settings</button>

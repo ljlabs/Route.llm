@@ -74,12 +74,13 @@ class BaseProvider(ABC):
         pass
     
     @abstractmethod
-    def get_stream_translator(self, target_format: str = "anthropic"):
+    def get_stream_translator(self, target_format: str = "anthropic", validate_format: Optional[str] = None):
         """
         Get the stream translator for converting streaming responses.
         
         Args:
             target_format: The target format ("anthropic" or "openai")
+            validate_format: If set, validate SSE events against this format ("anthropic" or "openai")
             
         Returns:
             StreamTranslator instance for handling streaming responses

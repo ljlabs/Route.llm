@@ -328,6 +328,9 @@ async function fetchSettings() {
         if (document.getElementById("global-max-tokens")) {
             document.getElementById("global-max-tokens").value = settings.max_tokens;
         }
+        if (document.getElementById("global-response-format")) {
+            document.getElementById("global-response-format").value = settings.response_format || "anthropic";
+        }
         return settings;
     } catch (err) {
         console.error(err);
@@ -346,11 +349,12 @@ function closeGlobalSettingsModal() {
 async function saveGlobalRateLimit() {
     const tps = parseFloat(document.getElementById("global-rate-limit").value) || 0;
     const maxTokens = parseInt(document.getElementById("global-max-tokens").value) || 32000;
+    const responseFormat = document.getElementById("global-response-format").value || "anthropic";
     try {
         const res = await fetch("/api/settings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ rate_limit_tps: tps, max_tokens: maxTokens })
+            body: JSON.stringify({ rate_limit_tps: tps, max_tokens: maxTokens, response_format: responseFormat })
         });
         if (res.ok) {
             closeGlobalSettingsModal();
@@ -536,6 +540,7 @@ function showLogDetail(index, element) {
         router_received:   { label: "1 · Router Received",       icon: "R" },
         provider_request:  { label: "2 · Sent to Provider",      icon: "→" },
         provider_response: { label: "3 · Provider Response",     icon: "←" },
+        sse_validation:    { label: "SSE Validation",            icon: "✓" },
         client_response:   { label: "4 · Response to Client",    icon: "C" },
     };
 

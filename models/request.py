@@ -78,3 +78,4 @@ class SettingsRequest(BaseModel):
     log_limit: Optional[int] = Field(default=None, description="Maximum log entries to keep")
     rate_limit_tps: Optional[float] = Field(default=None, description="Rate limit in requests per second")
     max_tokens: Optional[int] = Field(default=None, description="Default max tokens for all providers")
+    response_format: Optional[str] = Field(default=None, description="Response format: 'anthropic' or 'openai'")

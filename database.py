@@ -119,6 +119,7 @@ def init_db():
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('log_limit', '50')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('rate_limit_tps', '0')") # 0 means disabled
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('max_tokens', '32000')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('response_format', 'anthropic')")
 
     conn.commit()
     conn.close()
@@ -278,6 +279,26 @@ def set_max_tokens(max_tokens):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('max_tokens', ?)", (str(max_tokens),))
+    conn.commit()
+    conn.close()
+
+def get_response_format():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = 'response_format'")
+    row = cursor.fetchone()
+    conn.close()
+    value = row['value'] if row else 'anthropic'
+    if value not in ('anthropic', 'openai'):
+        value = 'anthropic'
+    return value
+
+def set_response_format(fmt):
+    if fmt not in ('anthropic', 'openai'):
+        raise ValueError("response_format must be 'anthropic' or 'openai'")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('response_format', ?)", (fmt,))
     conn.commit()
     conn.close()
 
