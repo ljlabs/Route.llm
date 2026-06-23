@@ -68,6 +68,7 @@ class SettingsResponse(BaseModel):
     rate_limit_tps: float
     max_tokens: int
     response_format: str = "anthropic"
+    disable_streaming: bool = False
 
 
 class LogEntry(BaseModel):

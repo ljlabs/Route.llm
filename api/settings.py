@@ -24,7 +24,8 @@ async def get_settings():
             "log_limit": db.get_log_limit(),
             "rate_limit_tps": db.get_rate_limit_tps(),
             "max_tokens": db.get_max_tokens(),
-            "response_format": db.get_response_format()
+            "response_format": db.get_response_format(),
+            "disable_streaming": db.get_disable_streaming()
         }
     except Exception as e:
         logger.error(f"Failed to get settings: {e}")
@@ -60,6 +61,11 @@ async def set_settings(settings: SettingsRequest):
         if settings.response_format is not None:
             db.set_response_format(settings.response_format)
             logger.info(f"Response format updated to {settings.response_format}")
+
+        # Update disable_streaming if provided
+        if settings.disable_streaming is not None:
+            db.set_disable_streaming(settings.disable_streaming)
+            logger.info(f"Disable streaming updated to {settings.disable_streaming}")
 
         return {"status": "success", "message": "Settings updated"}
     except ValueError as e:

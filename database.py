@@ -120,6 +120,7 @@ def init_db():
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('rate_limit_tps', '0')") # 0 means disabled
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('max_tokens', '32000')")
     cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('response_format', 'anthropic')")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('disable_streaming', '0')") # 0 means streaming enabled
 
     conn.commit()
     conn.close()
@@ -299,6 +300,24 @@ def set_response_format(fmt):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('response_format', ?)", (fmt,))
+    conn.commit()
+    conn.close()
+
+def get_disable_streaming():
+    """Get the disable_streaming setting. Returns True if streaming should be disabled."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = 'disable_streaming'")
+    row = cursor.fetchone()
+    conn.close()
+    value = int(row['value']) if row else 0
+    return bool(value)
+
+def set_disable_streaming(disable: bool):
+    """Set the disable_streaming setting. True means all responses will be non-streaming."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('disable_streaming', ?)", (int(disable),))
     conn.commit()
     conn.close()
 

@@ -57,6 +57,11 @@ class RouterService:
         """
         import database as db
 
+        # Check if streaming is globally disabled
+        if db.get_disable_streaming():
+            stream = False
+            anthropic_request["stream"] = False  # Also override in request body
+
         # Extract model from request for model-based routing
         model_name = anthropic_request.get("model")
 
@@ -157,6 +162,11 @@ class RouterService:
             JSONResponse or StreamingResponse
         """
         import database as db
+
+        # Check if streaming is globally disabled
+        if db.get_disable_streaming():
+            stream = False
+            openai_request["stream"] = False  # Also override in request body
 
         # Extract model from request for model-based routing
         model_name = openai_request.get("model")

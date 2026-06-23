@@ -369,6 +369,14 @@
                 </select>
                 <p class="subtitle" style="margin-top: 8px;">Validates streaming SSE events against the chosen schema. Mismatches are logged as warnings.</p>
             </div>
+            <div class="form-group">
+                <label for="disable-streaming">Disable Streaming</label>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <input type="checkbox" id="disable-streaming" class="form-checkbox">
+                    <span style="color: var(--text-secondary);">Force all responses to be non-streaming (overrides client stream parameter)</span>
+                </div>
+                <p class="subtitle" style="margin-top: 8px;">When enabled, all requests will receive full responses at once, regardless of their stream setting.</p>
+            </div>
             <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" onclick="closeGlobalSettingsModal()">Cancel</button>
                 <button type="button" class="btn btn-primary" onclick="saveGlobalRateLimit()">Save Settings</button>

@@ -321,6 +321,7 @@ async function fetchSettings() {
     try {
         const res = await fetch("/api/settings");
         const settings = await res.json();
+        console.log("Settings received from API:", settings);
         document.getElementById("log-limit-select").value = settings.log_limit.toString();
         if (document.getElementById("global-rate-limit")) {
             document.getElementById("global-rate-limit").value = settings.rate_limit_tps;
@@ -331,9 +332,16 @@ async function fetchSettings() {
         if (document.getElementById("global-response-format")) {
             document.getElementById("global-response-format").value = settings.response_format || "anthropic";
         }
+        if (document.getElementById("disable-streaming")) {
+            const shouldCheck = settings.disable_streaming || false;
+            console.log("Setting disable-streaming checkbox to:", shouldCheck);
+            document.getElementById("disable-streaming").checked = shouldCheck;
+        } else {
+            console.warn("disable-streaming checkbox element not found");
+        }
         return settings;
     } catch (err) {
-        console.error(err);
+        console.error("Error fetching settings:", err);
     }
 }
 
@@ -350,11 +358,12 @@ async function saveGlobalRateLimit() {
     const tps = parseFloat(document.getElementById("global-rate-limit").value) || 0;
     const maxTokens = parseInt(document.getElementById("global-max-tokens").value) || 32000;
     const responseFormat = document.getElementById("global-response-format").value || "anthropic";
+    const disableStreaming = document.getElementById("disable-streaming").checked || false;
     try {
         const res = await fetch("/api/settings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ rate_limit_tps: tps, max_tokens: maxTokens, response_format: responseFormat })
+            body: JSON.stringify({ rate_limit_tps: tps, max_tokens: maxTokens, response_format: responseFormat, disable_streaming: disableStreaming })
         });
         if (res.ok) {
             closeGlobalSettingsModal();

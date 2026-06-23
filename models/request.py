@@ -79,3 +79,4 @@ class SettingsRequest(BaseModel):
     rate_limit_tps: Optional[float] = Field(default=None, description="Rate limit in requests per second")
     max_tokens: Optional[int] = Field(default=None, description="Default max tokens for all providers")
     response_format: Optional[str] = Field(default=None, description="Response format: 'anthropic' or 'openai'")
+    disable_streaming: Optional[bool] = Field(default=None, description="Disable streaming responses (override stream flag to false)")
