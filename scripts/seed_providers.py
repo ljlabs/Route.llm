@@ -3,6 +3,7 @@ Seed providers and model mappings into a running model_router instance via its R
 
 Usage:
     python scripts/seed_providers.py [--base-url http://localhost:8000] [--clear]
+    python scripts/seed_providers.py --extract   # pull live data → manifest files
 
 Reads providers.json and model_mappings.json from the same directory and
 POSTs each entry to the appropriate API endpoint.
@@ -102,15 +103,73 @@ def seed_mappings(base_url, manifest_path, clear=False):
     return failed
 
 
+def extract_manifests(base_url, providers_path, mappings_path):
+    """Pull live providers and model mappings from the server and write them to the manifest files."""
+    base = base_url.rstrip("/")
+
+    # --- providers ---
+    providers_url = f"{base}/api/providers"
+    print(f"Fetching providers from {providers_url} ...")
+    resp = requests.get(providers_url)
+    resp.raise_for_status()
+    raw_providers = resp.json()
+
+    # Strip server-assigned fields that are not part of the seed manifest
+    PROVIDER_SEED_FIELDS = {
+        "name", "api_type", "endpoint_url", "api_key", "model_name",
+        "is_active", "rate_limit_tps", "max_tokens",
+    }
+    providers_out = []
+    for p in raw_providers:
+        entry = {k: v for k, v in p.items() if k in PROVIDER_SEED_FIELDS}
+        # Normalise is_active to an int (0/1) to match the existing manifest style
+        if "is_active" in entry:
+            entry["is_active"] = int(bool(entry["is_active"]))
+        providers_out.append(entry)
+
+    with open(providers_path, "w") as f:
+        json.dump(providers_out, f, indent=2)
+    print(f"  ✓ Wrote {len(providers_out)} providers → {providers_path}")
+
+    # --- model mappings ---
+    mappings_url = f"{base}/api/routing"
+    print(f"Fetching model mappings from {mappings_url} ...")
+    resp = requests.get(mappings_url)
+    resp.raise_for_status()
+    raw_mappings = resp.json()
+
+    MAPPING_SEED_FIELDS = {"model_id", "provider_id"}
+    mappings_out = [
+        {k: v for k, v in m.items() if k in MAPPING_SEED_FIELDS}
+        for m in raw_mappings
+    ]
+
+    with open(mappings_path, "w") as f:
+        json.dump(mappings_out, f, indent=2)
+    print(f"  ✓ Wrote {len(mappings_out)} mappings → {mappings_path}")
+
+    print("\n" + "=" * 40)
+    print("Extract complete.")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Seed providers and model mappings into model_router")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Base URL of the running router")
     parser.add_argument("--providers", default=DEFAULT_PROVIDERS, help="Path to providers.json")
     parser.add_argument("--mappings", default=DEFAULT_MAPPINGS, help="Path to model_mappings.json")
     parser.add_argument("--clear", action="store_true", help="Delete all existing data first")
+    parser.add_argument(
+        "--extract", "-e",
+        action="store_true",
+        help="Extract current providers and model mappings from the server and write them to the manifest files",
+    )
     args = parser.parse_args()
 
     base = args.base_url.rstrip("/")
+
+    if args.extract:
+        return extract_manifests(base, args.providers, args.mappings)
 
     total_failures = 0
     total_failures += seed_providers(base, args.providers, clear=args.clear)
