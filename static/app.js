@@ -988,11 +988,8 @@ async function updateMetricsCharts() {
         if (canvas) {
             const parent = canvas.parentElement;
             if (parent) {
-                parent.innerHTML = skeletonMetrics();
-                // Restore canvas so Chart.js can redraw after data arrives
-                const newCanvas = document.createElement("canvas");
-                newCanvas.id = id;
-                parent.appendChild(newCanvas);
+                // Clear parent and add shimmer + canvas
+                parent.innerHTML = skeletonMetrics() + `<canvas id="${id}" style="display:none;"></canvas>`;
             }
         }
     });
@@ -1018,6 +1015,19 @@ function renderMetricsCharts(summaryData, historyData) {
     const tokensSent = summaryData.map(m => m.total_tokens_sent);
     const tokensReceived = summaryData.map(m => m.total_tokens_received);
     const avgLatencies = summaryData.map(m => m.avg_latency);
+
+    // Remove shimmer skeletons and show canvases
+    ["chart-latency-history", "chart-requests", "chart-tokens", "chart-latency"].forEach(id => {
+        const parent = document.getElementById(id)?.parentElement;
+        if (parent) {
+            const skeletons = parent.querySelectorAll(".skeleton-chart");
+            skeletons.forEach(s => s.remove());
+            const canvas = document.getElementById(id);
+            if (canvas) {
+                canvas.style.display = "";
+            }
+        }
+    });
 
     const commonOptions = {
         responsive: true,
