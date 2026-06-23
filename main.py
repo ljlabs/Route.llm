@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,12 +13,25 @@ from core.router import init_router_service
 from core.embedding.router import init_embedding_router_service
 from infrastructure.http_client import init_http_client
 
+# Check for VERBOSE_STREAMING environment variable
+# Usage: set VERBOSE_STREAMING=true  (Windows CMD)
+#        $env:VERBOSE_STREAMING="true"  (PowerShell)
+#        export VERBOSE_STREAMING=true  (Linux/Mac)
+VERBOSE_STREAMING = os.getenv("VERBOSE_STREAMING", "").lower() == "true"
+
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Create a streaming logger for verbose output
+stream_logger = logging.getLogger("streaming")
+if VERBOSE_STREAMING:
+    stream_logger.setLevel(logging.DEBUG)
+else:
+    stream_logger.setLevel(logging.WARNING)
 
 app = FastAPI(title="LLM Proxy & Router", version="2.0.0")
 
@@ -45,6 +59,13 @@ async def startup_event():
     init_embedding_router_service(http_client, per_provider_limiter)
     
     logger.info("Application services initialized")
+    if VERBOSE_STREAMING:
+        logger.info("🔍 VERBOSE STREAMING LOGGING ENABLED - All SSE chunks will be logged to terminal")
+    else:
+        logger.info("💡 To enable verbose streaming logging, set environment variable:")
+        logger.info("     Windows CMD: set VERBOSE_STREAMING=true")
+        logger.info("     PowerShell:  $env:VERBOSE_STREAMING=\"true\"")
+        logger.info("     Linux/Mac:   export VERBOSE_STREAMING=true")
 
     # Log all registered routes
     for route in app.routes:

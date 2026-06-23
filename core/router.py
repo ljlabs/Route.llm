@@ -18,6 +18,7 @@ from .providers.base import BaseProvider
 from .rate_limiter import RateLimiter, PerProviderRateLimiter, get_per_provider_limiter
 
 logger = logging.getLogger(__name__)
+stream_logger = logging.getLogger("streaming")
 
 
 class RouterService:
@@ -489,6 +490,7 @@ class RouterService:
             tokens_sent = 0
             tokens_received = 0
             first_byte_received = False
+            chunk_count = 0
 
             try:
                 async for line in stream_translator.translate_stream(
@@ -496,6 +498,7 @@ class RouterService:
                     provider_config,
                     accumulated_blocks
                 ):
+                    chunk_count += 1
                     if not first_byte_received:
                         first_byte_received = True
 
@@ -504,10 +507,17 @@ class RouterService:
                     tokens_sent += u["tokens_sent"]
                     tokens_received += u["tokens_received"]
 
+                    # Log the chunk if verbose streaming is enabled
+                    stream_logger.debug(f"[CHUNK {chunk_count}] Response → Client: {line[:200]}...")
+                    stream_logger.debug(f"[CHUNK {chunk_count}] Full: {line}")
+
                     yield line
             finally:
                 # Total latency: time to last token (completion)
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
+                
+                # Log summary
+                stream_logger.debug(f"[STREAM COMPLETE] Total chunks: {chunk_count}, Latency: {latency_ms}ms")
                 
                 # Fallback to estimation if usage is missing
                 if tokens_sent == 0:

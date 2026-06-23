@@ -53,8 +53,12 @@ class PassthroughStreamTranslator(StreamTranslator):
     ) -> Generator[str, None, None]:
         """No translation needed - pass through the stream as-is."""
         from .response_schemas import validate_anthropic_sse_line, validate_openai_sse_line
+        stream_logger = logging.getLogger("streaming")
+        chunk_count = 0
         try:
             async for line in response.aiter_lines():
+                chunk_count += 1
+                stream_logger.debug(f"[LLM → ROUTER] Chunk {chunk_count} from {provider_config.get('name', 'Unknown')}: {line[:200]}...")
                 yield line + "\n"
                 
                 # Validate output format if configured
@@ -89,6 +93,7 @@ class PassthroughStreamTranslator(StreamTranslator):
                                     accumulated_blocks[0]["text"] += text
                         except Exception:
                             pass
+            stream_logger.debug(f"[LLM → ROUTER] Stream completed after {chunk_count} chunks from {provider_config.get('name', 'Unknown')}")
         finally:
             await response.aclose()
 
@@ -109,12 +114,17 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
     ) -> Generator[str, None, None]:
         """Translate OpenAI streaming response to Anthropic format."""
         from .response_schemas import validate_anthropic_sse_line
+        stream_logger = logging.getLogger("streaming")
         sent_start = False
         tool_idx_map = {}
         next_anth_block_idx = 1
+        llm_chunk_count = 0
+        output_chunk_count = 0
         
         try:
             async for line in response.aiter_lines():
+                llm_chunk_count += 1
+                stream_logger.debug(f"[LLM → ROUTER] Raw chunk {llm_chunk_count} from {provider_config.get('name', 'Unknown')}: {line[:200]}...")
                 if not line:
                     continue
                     
@@ -151,7 +161,9 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                                 self.validation_checked += 1
                                 if not validate_anthropic_sse_line("data: " + json.dumps(msg_start_data)):
                                     self.validation_warnings.append("message_start")
-                            yield f"event: message_start\ndata: " + json.dumps(msg_start_data) + "\n\n"
+                            output = f"event: message_start\ndata: " + json.dumps(msg_start_data) + "\n\n"
+                            stream_logger.debug(f"[ROUTER → CLIENT] Output chunk: {output[:200]}...")
+                            yield output
                             
                             # Start default text content block at index 0
                             cb_start_data = {
@@ -163,7 +175,9 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                                 self.validation_checked += 1
                                 if not validate_anthropic_sse_line("data: " + json.dumps(cb_start_data)):
                                     self.validation_warnings.append("content_block_start")
-                            yield f"event: content_block_start\ndata: " + json.dumps(cb_start_data) + "\n\n"
+                            output = f"event: content_block_start\ndata: " + json.dumps(cb_start_data) + "\n\n"
+                            stream_logger.debug(f"[ROUTER → CLIENT] Output chunk: {output[:200]}...")
+                            yield output
                             sent_start = True
                         
                         # Yield standard text content chunk
@@ -183,7 +197,9 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                                 self.validation_checked += 1
                                 if not validate_anthropic_sse_line("data: " + json.dumps(cb_delta_data)):
                                     self.validation_warnings.append("content_block_delta")
-                            yield f"event: content_block_delta\ndata: " + json.dumps(cb_delta_data) + "\n\n"
+                            output = f"event: content_block_delta\ndata: " + json.dumps(cb_delta_data) + "\n\n"
+                            stream_logger.debug(f"[ROUTER → CLIENT] Output chunk: {output[:200]}...")
+                            yield output
                             
                         # Yield tool calls chunks if present
                         tool_calls = delta.get("tool_calls", [])
@@ -296,6 +312,7 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
     ) -> Generator[str, None, None]:
         """Translate Anthropic streaming response to OpenAI format."""
         sent_start = False
+        msg_id = None  # Store ID from first chunk
         
         try:
             async for line in response.aiter_lines():
@@ -330,7 +347,7 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                                     accumulated_blocks.append({"type": "text", "text": ""})
                                 accumulated_blocks[0]["text"] += text
                                 yield "data: " + json.dumps({
-                                    "id": f"chatcmpl-{os.urandom(8).hex()}",
+                                    "id": msg_id,  # REUSE the ID from message_start
                                     "object": "chat.completion.chunk",
                                     "created": int(__import__('time').time()),
                                     "choices": [{
@@ -348,7 +365,7 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                                 stop_reason = "length"
                             
                             yield "data: " + json.dumps({
-                                "id": f"chatcmpl-{os.urandom(8).hex()}",
+                                "id": msg_id,  # REUSE the ID from message_start
                                 "object": "chat.completion.chunk",
                                 "created": int(__import__('time').time()),
                                 "choices": [{
