@@ -14,7 +14,7 @@ from .gemini import GeminiProvider
 from .mistral import MistralProvider
 from .openrouter import OpenRouterProvider
 from .embedding import EmbeddingProvider
-from .nvidia_nim import NvidiaNimEmbeddingProvider
+from .nvidia_nim import NvidiaNimChatProvider, NvidiaNimEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ class ProviderFactory:
         "gemini": GeminiProvider,
         "mistral": MistralProvider,
         "openrouter": OpenRouterProvider,
+        "nvidia_nim": NvidiaNimChatProvider,
         "embedding": EmbeddingProvider,
         "embedding_nvidia_nim": NvidiaNimEmbeddingProvider,
     }

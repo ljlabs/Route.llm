@@ -97,6 +97,8 @@ function suggestBaseUrl() {
         urlInput.value = "https://generativelanguage.googleapis.com/v1beta/openai/embeddings";
     } else if (apiType === "embedding_nvidia_nim") {
         urlInput.value = "https://integrate.api.nvidia.com/v1/embeddings";
+    } else if (apiType === "nvidia_nim") {
+        urlInput.value = "https://integrate.api.nvidia.com/v1/chat/completions";
     } else {
         urlInput.value = "https://api.openai.com/v1/chat/completions";
     }
