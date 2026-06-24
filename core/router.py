@@ -17,6 +17,8 @@ from .providers.service import get_provider_service
 from .providers.base import BaseProvider
 from .rate_limiter import RateLimiter, PerProviderRateLimiter, get_per_provider_limiter
 
+import database as db
+
 logger = logging.getLogger(__name__)
 stream_logger = logging.getLogger("streaming")
 
@@ -56,12 +58,6 @@ class RouterService:
         Returns:
             JSONResponse or StreamingResponse
         """
-        import database as db
-
-        # Check if streaming is globally disabled
-        if db.get_disable_streaming():
-            stream = False
-            anthropic_request["stream"] = False  # Also override in request body
 
         # Extract model from request for model-based routing
         model_name = anthropic_request.get("model")
@@ -90,13 +86,19 @@ class RouterService:
 
         req_body_str = json.dumps(anthropic_request, indent=2)
 
-        # Stage 1 — log as soon as the request reaches the router
+        # LOGGING Stage 1 — log as soon as the request reaches the router
         request_id = db.start_request_log(
             provider_name=provider.name,
             request_method="POST",
             request_path="/v1/messages",
             request_body=req_body_str,
         )
+
+        # This is done after the first db.start_request_log so we can get the raw client request
+        # Check if streaming is globally disabled
+        if db.get_disable_streaming():
+            stream = False
+            anthropic_request["stream"] = False  # Also override in request body
 
         # Apply rate limiting (per-provider if configured, else global)
         await self.per_provider_limiter.wait_for_provider(provider.provider_id, provider.rate_limit_tps)
@@ -441,7 +443,7 @@ class RouterService:
         import database as db
         logger.info(f"Routing streaming request to {provider.name}")
 
-        # Stage 2 — about to send to provider
+        # LOGGING Stage 2 — about to send to provider
         provider_req_body = json.dumps(wrapped_request, indent=2)
         db.add_log_event(request_id, stage="provider_request", body=provider_req_body)
 
@@ -456,7 +458,7 @@ class RouterService:
         # Send request with streaming
         response = await self.http_client.send(request, stream=True)
 
-        # Stage 3 — first bytes received from provider (headers/status)
+        # LOGGING Stage 3 — first bytes received from provider (headers/status)
         db.add_log_event(
             request_id,
             stage="provider_response",

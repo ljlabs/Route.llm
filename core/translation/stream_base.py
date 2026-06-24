@@ -116,6 +116,8 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
         from .response_schemas import validate_anthropic_sse_line
         stream_logger = logging.getLogger("streaming")
         sent_start = False
+        sent_stop = False
+        msg_id = None  # Extract and reuse from first chunk
         tool_idx_map = {}
         next_anth_block_idx = 1
         llm_chunk_count = 0
@@ -140,9 +142,15 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                         choice = choices[0]
                         delta = choice.get("delta", {})
                         
+                        # Extract message ID from first chunk and reuse throughout
+                        if msg_id is None and data.get("id"):
+                            msg_id = data.get("id")
+                        
                         # Generate message start events once
                         if not sent_start:
-                            msg_id = data.get("id", f"msg_local_{os.urandom(8).hex()}")
+                            # Use extracted ID or generate a fallback
+                            if msg_id is None:
+                                msg_id = f"msg_local_{os.urandom(8).hex()}"
                             model_name = data.get("model", provider_config.get("model_name", ""))
                             msg_start_data = {
                                 "type": "message_start",
@@ -182,7 +190,7 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                         
                         # Yield standard text content chunk
                         text = delta.get("content", "")
-                        if text:
+                        if text and not sent_stop:
                             # Accumulate response block text
                             if len(accumulated_blocks) <= 0:
                                 accumulated_blocks.append({"type": "text", "text": ""})
@@ -204,6 +212,8 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                         # Yield tool calls chunks if present
                         tool_calls = delta.get("tool_calls", [])
                         for call in tool_calls:
+                            if sent_stop:
+                                break
                             call_idx = call.get("index", 0)
                             
                             # If new tool call index, send start event
@@ -248,7 +258,8 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                                 }) + "\n\n"
                             
                         # Handle stop reasons
-                        if choice.get("finish_reason") is not None:
+                        if choice.get("finish_reason") is not None and not sent_stop:
+                            sent_stop = True
                             finish_reason = choice.get("finish_reason")
                             stop_reason = "end_turn"
                             
@@ -312,7 +323,7 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
     ) -> Generator[str, None, None]:
         """Translate Anthropic streaming response to OpenAI format."""
         sent_start = False
-        msg_id = None  # Store ID from first chunk
+        msg_id = None  # Extract and reuse from message_start event
         
         try:
             async for line in response.aiter_lines():
@@ -326,7 +337,11 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                         event_type = data.get("type")
                         
                         if event_type == "message_start":
-                            msg_id = data.get("message", {}).get("id", f"chatcmpl-{os.urandom(8).hex()}")
+                            # Extract ID from message_start event
+                            msg_id = data.get("message", {}).get("id")
+                            # Generate fallback ID if provider doesn't provide one
+                            if not msg_id:
+                                msg_id = f"chatcmpl-{os.urandom(8).hex()}"
                             model_name = data.get("message", {}).get("model", provider_config.get("model_name", ""))
                             yield "data: " + json.dumps({
                                 "id": msg_id,
@@ -346,6 +361,9 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                                 if len(accumulated_blocks) <= 0:
                                     accumulated_blocks.append({"type": "text", "text": ""})
                                 accumulated_blocks[0]["text"] += text
+                                # Ensure msg_id is set before sending delta
+                                if msg_id is None:
+                                    msg_id = f"chatcmpl-{os.urandom(8).hex()}"
                                 yield "data: " + json.dumps({
                                     "id": msg_id,  # REUSE the ID from message_start
                                     "object": "chat.completion.chunk",
@@ -364,6 +382,9 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                             elif anth_stop == "max_tokens":
                                 stop_reason = "length"
                             
+                            # Ensure msg_id is set before sending delta
+                            if msg_id is None:
+                                msg_id = f"chatcmpl-{os.urandom(8).hex()}"
                             yield "data: " + json.dumps({
                                 "id": msg_id,  # REUSE the ID from message_start
                                 "object": "chat.completion.chunk",
