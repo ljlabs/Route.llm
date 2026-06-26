@@ -1,8 +1,8 @@
 """
 Mock OpenAI-Compatible Server
 
-A lightweight FastAPI server that mimics an OpenAI chat completions endpoint
-and an OpenAI-compatible embeddings endpoint.
+A lightweight FastAPI server that mimics an OpenAI chat completions endpoint,
+an OpenAI-compatible embeddings endpoint, and an Anthropic messages endpoint.
 Returns configurable generated text / embedding vectors for every request.
 """
 
@@ -15,13 +15,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import uvicorn
 
-app = FastAPI(title="Mock OpenAI Server")
+app = FastAPI(title="Mock Server")
 
 # Stats tracking
 _stats = {
     "total_requests": 0,
     "total_errors": 0,
     "embedding_requests": 0,
+    "total_image_requests": 0,
     "start_time": None,
 }
 
@@ -51,6 +52,18 @@ def generate_text(num_tokens: int) -> str:
     return " ".join(selected)
 
 
+def _has_image_content(messages: list) -> bool:
+    """Check if any message contains image content blocks."""
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") in ("image", "image_url"):
+                        return True
+    return False
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     _stats["total_requests"] += 1
@@ -63,6 +76,11 @@ async def chat_completions(request: Request):
 
     model = body.get("model", "mock-model")
     max_tokens = body.get("max_tokens", response_tokens)
+
+    # Track image requests
+    messages = body.get("messages", [])
+    if _has_image_content(messages):
+        _stats["total_image_requests"] += 1
 
     # Simulate LLM latency
     if response_latency_ms > 0:
@@ -91,6 +109,54 @@ async def chat_completions(request: Request):
             "prompt_tokens": 10,
             "completion_tokens": max_tokens,
             "total_tokens": 10 + max_tokens,
+        },
+    }
+
+    return JSONResponse(content=response)
+
+
+@app.post("/v1/messages")
+async def anthropic_messages(request: Request):
+    """Anthropic-compatible messages endpoint (for testing Anthropic passthrough)."""
+    _stats["total_requests"] += 1
+
+    try:
+        body = await request.json()
+    except Exception:
+        _stats["total_errors"] += 1
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
+
+    model = body.get("model", "mock-model")
+    max_tokens = body.get("max_tokens", response_tokens)
+
+    # Track image requests
+    messages = body.get("messages", [])
+    if _has_image_content(messages):
+        _stats["total_image_requests"] += 1
+
+    # Simulate LLM latency
+    if response_latency_ms > 0:
+        await asyncio.sleep(response_latency_ms / 1000.0)
+
+    text = generate_text(max_tokens)
+    msg_id = f"msg_{uuid.uuid4().hex[:12]}"
+
+    response = {
+        "id": msg_id,
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": [
+            {
+                "type": "text",
+                "text": text,
+            }
+        ],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": max_tokens,
         },
     }
 
@@ -203,7 +269,7 @@ def main():
     embedding_dims = args.embedding_dims
     _stats["start_time"] = time.time()
 
-    print(f"Mock OpenAI Server starting on {args.host}:{args.port}")
+    print(f"Mock Server starting on {args.host}:{args.port}")
     print(f"  Response latency: {response_latency_ms}ms")
     print(f"  Response tokens: {response_tokens}")
     print(f"  Embedding dims: {embedding_dims}")

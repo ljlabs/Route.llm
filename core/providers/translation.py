@@ -10,6 +10,39 @@ import time
 SIGNATURE_SEPARATOR = "____ts____"
 
 
+def _anthropic_image_to_openai(part: dict) -> dict:
+    """Convert Anthropic image block to OpenAI image_url block."""
+    source = part.get("source", {})
+    media_type = source.get("media_type", "image/png")
+    data = source.get("data", "")
+    return {
+        "type": "image",
+        "mime_type": media_type,
+        "data": f"{data}"
+    }
+
+
+def _openai_image_url_to_anthropic(part: dict) -> dict:
+    """Convert OpenAI image_url block to Anthropic image block."""
+    url = part.get("image_url", {}).get("url", "")
+    # Parse data URI: data:<media_type>;base64,<data>
+    if url.startswith("data:"):
+        header, _, data = url.partition(",")
+        # header = "data:image/jpeg;base64"
+        media_type = header.split(":", 1)[1].split(";")[0] if ":" in header else "image/png"
+    else:
+        media_type = "image/png"
+        data = url
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": media_type,
+            "data": data
+        }
+    }
+
+
 def sanitize_openai_payload(payload: dict, is_gemini: bool = False) -> dict:
     """
     Defensively strips Anthropic-specific or non-standard fields (like cache_control)
@@ -19,6 +52,11 @@ def sanitize_openai_payload(payload: dict, is_gemini: bool = False) -> dict:
         return payload
 
     for message in payload["messages"]:
+        # Skip sanitization for tool role messages - preserve content as-is for image support
+        if message.get("role") == "tool":
+            message.pop("cache_control", None)
+            continue
+        
         content = message.get("content")
         
         # 1. Flatten list content to string if it's purely text to avoid strict API errors
@@ -95,6 +133,7 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
         if isinstance(content, list):
             text_content = ""
             tool_calls = []
+            image_blocks = []
             
             for part in content:
                 if not isinstance(part, dict):
@@ -103,6 +142,8 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
                 
                 if part_type == "text":
                     text_content += part.get("text", "")
+                elif part_type == "image":
+                    image_blocks.append(_anthropic_image_to_openai(part))
                 elif part_type == "tool_use":
                     tool_id = part.get("id")
                     signature = None
@@ -131,29 +172,45 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
                     # We append them directly to the main messages list
                     tool_result_content = part.get("content")
                     if isinstance(tool_result_content, list):
-                        # Extract text from list of blocks if necessary
-                        sub_text = ""
+                        # Preserve images and text in tool results
+                        result_parts = []
                         for sub_part in tool_result_content:
-                            if isinstance(sub_part, dict) and sub_part.get("type") == "text":
-                                sub_text += sub_part.get("text", "")
-                        tool_result_content = sub_text
-                    
+                            if isinstance(sub_part, dict):
+                                if sub_part.get("type") == "text":
+                                    result_parts.append({"type": "text", "text": sub_part.get("text", "")})
+                                elif sub_part.get("type") == "image":
+                                    result_parts.append(_anthropic_image_to_openai(sub_part))
+                        tool_result_content = result_parts if result_parts else ""
+                    else:
+                        tool_result_content = str(tool_result_content) if tool_result_content else ""
+
                     tool_use_id = part.get("tool_use_id")
                     if tool_use_id and SIGNATURE_SEPARATOR in tool_use_id:
                         tool_use_id = tool_use_id.split(SIGNATURE_SEPARATOR)[0]
-                        
+
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_use_id,
-                        "content": str(tool_result_content)
+                        "content": tool_result_content
                     })
             
-            # If there's text or tool calls for this turn, append the message
-            if text_content or tool_calls:
-                openai_msg = {
-                    "role": role,
-                    "content": text_content if text_content else None
-                }
+            # If there's text, tool calls, or images for this turn, append the message
+            if text_content or tool_calls or image_blocks:
+                if image_blocks:
+                    # Build content array with text + images
+                    content_parts = []
+                    if text_content:
+                        content_parts.append({"type": "text", "text": text_content})
+                    content_parts.extend(image_blocks)
+                    openai_msg = {
+                        "role": role,
+                        "content": content_parts
+                    }
+                else:
+                    openai_msg = {
+                        "role": role,
+                        "content": text_content
+                    }
                 if tool_calls:
                     openai_msg["tool_calls"] = tool_calls
                 messages.append(openai_msg)
@@ -213,23 +270,47 @@ def openai_to_anthropic_request(openai_req: dict, target_model: str) -> dict:
         elif role == "tool":
             # Translate OpenAI tool response back to Anthropic tool_result block
             # For simplicity, we wrap it in a user message
+            tool_result_content = []
+            if content:
+                if isinstance(content, list):
+                    # Preserve mixed text and image content
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get("type") == "text":
+                                tool_result_content.append({"type": "text", "text": part.get("text", "")})
+                            elif part.get("type") == "image_url":
+                                tool_result_content.append(_openai_image_url_to_anthropic(part))
+                elif isinstance(content, str):
+                    tool_result_content.append({"type": "text", "text": content})
+            
             messages.append({
                 "role": "user",
                 "content": [
                     {
                         "type": "tool_result",
                         "tool_use_id": msg.get("tool_call_id"),
-                        "content": content
+                        "content": tool_result_content if tool_result_content else ""
                     }
                 ]
             })
         else:
             anth_content = []
             if content:
-                anth_content.append({
-                    "type": "text",
-                    "text": content
-                })
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict):
+                            if part.get("type") == "text":
+                                anth_content.append({
+                                    "type": "text",
+                                    "text": part.get("text", "")
+                                })
+                            elif part.get("type") == "image_url":
+                                anth_content.append(_openai_image_url_to_anthropic(part))
+                else:
+                    anth_content.append({
+                        "type": "text",
+                        "text": content
+                    })
             
             for call in tool_calls:
                 call_func = call.get("function", {})

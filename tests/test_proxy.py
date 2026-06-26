@@ -2,8 +2,15 @@ import pytest
 import json
 import time
 import database as db
-import translator as ts
 import httpx
+from core.providers.translation import (
+    anthropic_to_openai_request,
+    openai_to_anthropic_request,
+    sanitize_openai_payload,
+    openai_to_anthropic_response,
+    anthropic_to_openai_response,
+    SIGNATURE_SEPARATOR
+)
 from core.providers.factory import ProviderFactory
 from core.providers.base import BaseProvider
 from core.providers.openai import OpenAIProvider
@@ -107,7 +114,7 @@ def test_anthropic_to_openai_request_translation():
         "stream": True
     }
     
-    openai_req = ts.anthropic_to_openai_request(anth_req, "gpt-4o")
+    openai_req = anthropic_to_openai_request(anth_req, "gpt-4o")
     
     assert openai_req["model"] == "gpt-4o"
     assert len(openai_req["messages"]) == 2
@@ -150,7 +157,7 @@ def test_anthropic_to_openai_request_with_tools():
         ]
     }
     
-    openai_req = ts.anthropic_to_openai_request(anth_req, "gpt-4o")
+    openai_req = anthropic_to_openai_request(anth_req, "gpt-4o")
     
     assert len(openai_req["tools"]) == 1
     assert openai_req["tools"][0]["type"] == "function"
@@ -194,7 +201,7 @@ def test_openai_to_anthropic_response_translation():
         }
     }
     
-    anth_res = ts.openai_to_anthropic_response(openai_res)
+    anth_res = openai_to_anthropic_response(openai_res)
     
     assert anth_res["role"] == "assistant"
     assert anth_res["stop_reason"] == "tool_use"
@@ -245,10 +252,10 @@ def test_gemini_thought_signature_translation():
         "usage": {"prompt_tokens": 10, "completion_tokens": 20}
     }
     
-    anth_res = ts.openai_to_anthropic_response(gemini_res)
+    anth_res = openai_to_anthropic_response(gemini_res)
     
     # The ID should now be "mangled" with the signature
-    expected_id = f"call_gemini_123{ts.SIGNATURE_SEPARATOR}SIG_DATA_ABC_123"
+    expected_id = f"call_gemini_123{SIGNATURE_SEPARATOR}SIG_DATA_ABC_123"
     assert anth_res["content"][1]["id"] == expected_id
     
     # 2. Test translation from Anthropic request (with mangled ID) back to Gemini (OpenAI format)
@@ -281,7 +288,7 @@ def test_gemini_thought_signature_translation():
         ]
     }
     
-    openai_req = ts.anthropic_to_openai_request(anth_req, "gemini-2.0-flash-thinking")
+    openai_req = anthropic_to_openai_request(anth_req, "gemini-2.0-flash-thinking")
     
     # Check assistant message has the restored signature in extra_content
     assistant_msg = openai_req["messages"][0]
@@ -306,7 +313,7 @@ def test_mistral_sanitization():
                 "content": [
                     {
                         "type": "tool_use",
-                        "id": f"call_123{ts.SIGNATURE_SEPARATOR}SIG_STUFF",
+                        "id": f"call_123{SIGNATURE_SEPARATOR}SIG_STUFF",
                         "name": "tool",
                         "input": {}
                     }
@@ -322,10 +329,10 @@ def test_mistral_sanitization():
     }
     
     # 1. Translate to OpenAI
-    openai_req = ts.anthropic_to_openai_request(anth_req, "mistral-large-latest")
+    openai_req = anthropic_to_openai_request(anth_req, "mistral-large-latest")
     
     # 2. Sanitize for Mistral (is_gemini=False)
-    sanitized_mistral = ts.sanitize_openai_payload(openai_req, is_gemini=False)
+    sanitized_mistral = sanitize_openai_payload(openai_req, is_gemini=False)
     
     # System prompt should be a string and clean
     assert sanitized_mistral["messages"][0]["role"] == "system"
@@ -340,8 +347,8 @@ def test_mistral_sanitization():
     assert "cache_control" not in sanitized_mistral["messages"][2]
 
     # 3. Sanitize for Gemini (is_gemini=True)
-    openai_req_gemini = ts.anthropic_to_openai_request(anth_req, "gemini-model")
-    sanitized_gemini = ts.sanitize_openai_payload(openai_req_gemini, is_gemini=True)
+    openai_req_gemini = anthropic_to_openai_request(anth_req, "gemini-model")
+    sanitized_gemini = sanitize_openai_payload(openai_req_gemini, is_gemini=True)
     
     # Assistant message should have extra_content PRESERVED
     assert sanitized_gemini["messages"][1]["role"] == "assistant"
@@ -669,7 +676,7 @@ def test_openai_response_null_usage():
         ],
         "usage": None
     }
-    anth_res = ts.openai_to_anthropic_response(openai_res)
+    anth_res = openai_to_anthropic_response(openai_res)
     assert anth_res["content"][0]["text"] == "Hello! How can I help you?"
     assert anth_res["usage"]["input_tokens"] == 0
     assert anth_res["usage"]["output_tokens"] == 0
@@ -690,7 +697,7 @@ def test_openai_response_missing_usage():
             }
         ]
     }
-    anth_res = ts.openai_to_anthropic_response(openai_res)
+    anth_res = openai_to_anthropic_response(openai_res)
     assert anth_res["usage"]["input_tokens"] == 0
     assert anth_res["usage"]["output_tokens"] == 0
 
@@ -708,4 +715,341 @@ def test_settings_response_max_tokens():
     from models.provider import SettingsResponse
     resp = SettingsResponse(log_limit=50, rate_limit_tps=0.0, max_tokens=32000)
     assert resp.max_tokens == 32000
+
+# --- Unit Tests for Image Content ---
+
+# Minimal valid base64-encoded 1x1 white pixel PNG
+TINY_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+
+def test_anthropic_to_openai_request_with_image():
+    """Test that Anthropic image blocks are converted to OpenAI image_url blocks."""
+    anth_req = {
+        "model": "claude-3-5-sonnet",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What's in this image?"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": TINY_BASE64
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 1024
+    }
+
+    openai_req = anthropic_to_openai_request(anth_req, "gpt-4o")
+
+    msg = openai_req["messages"][0]
+    assert msg["role"] == "user"
+    assert isinstance(msg["content"], list)
+    assert len(msg["content"]) == 2
+
+    # Text block preserved
+    assert msg["content"][0]["type"] == "text"
+    assert msg["content"][0]["text"] == "What's in this image?"
+
+    # Image block converted
+    img = msg["content"][1]
+    assert img["type"] == "image_url"
+    assert img["image_url"]["url"] == f"data:image/png;base64,{TINY_BASE64}"
+
+
+def test_anthropic_to_openai_request_image_only():
+    """Test Anthropic message with only an image (no text) produces content array."""
+    anth_req = {
+        "model": "claude-3-5-sonnet",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": TINY_BASE64
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 512
+    }
+
+    openai_req = anthropic_to_openai_request(anth_req, "gpt-4o")
+
+    msg = openai_req["messages"][0]
+    assert isinstance(msg["content"], list)
+    assert len(msg["content"]) == 1
+    assert msg["content"][0]["type"] == "image_url"
+    assert "data:image/jpeg;base64," in msg["content"][0]["image_url"]["url"]
+
+
+def test_anthropic_to_openai_request_multiple_images():
+    """Test multiple images in a single message."""
+    anth_req = {
+        "model": "claude-3-5-sonnet",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Compare these images"},
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/png", "data": TINY_BASE64}
+                    },
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/gif", "data": TINY_BASE64}
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 1024
+    }
+
+    openai_req = anthropic_to_openai_request(anth_req, "gpt-4o")
+
+    content = openai_req["messages"][0]["content"]
+    assert len(content) == 3
+    assert content[0]["type"] == "text"
+    assert content[1]["type"] == "image_url"
+    assert content[2]["type"] == "image_url"
+    assert "data:image/png;base64," in content[1]["image_url"]["url"]
+    assert "data:image/gif;base64," in content[2]["image_url"]["url"]
+
+
+def test_openai_to_anthropic_request_with_image():
+    """Test that OpenAI image_url blocks are converted to Anthropic image blocks."""
+    openai_req = {
+        "model": "gpt-4o",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{TINY_BASE64}"
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 1024
+    }
+
+    anth_req = openai_to_anthropic_request(openai_req, "claude-3-5-sonnet")
+
+    msg = anth_req["messages"][0]
+    assert msg["role"] == "user"
+    assert isinstance(msg["content"], list)
+    assert len(msg["content"]) == 2
+
+    # Text block preserved
+    assert msg["content"][0]["type"] == "text"
+    assert msg["content"][0]["text"] == "Describe this image"
+
+    # Image block converted
+    img = msg["content"][1]
+    assert img["type"] == "image"
+    assert img["source"]["type"] == "base64"
+    assert img["source"]["media_type"] == "image/jpeg"
+    assert img["source"]["data"] == TINY_BASE64
+
+
+def test_openai_to_anthropic_request_image_only():
+    """Test OpenAI message with only an image_url produces content array."""
+    openai_req = {
+        "model": "gpt-4o",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{TINY_BASE64}"
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 512
+    }
+
+    anth_req = openai_to_anthropic_request(openai_req, "claude-3-5-sonnet")
+
+    msg = anth_req["messages"][0]
+    assert isinstance(msg["content"], list)
+    assert len(msg["content"]) == 1
+    assert msg["content"][0]["type"] == "image"
+    assert msg["content"][0]["source"]["media_type"] == "image/png"
+
+
+def test_openai_to_anthropic_request_multiple_images():
+    """Test multiple image_url blocks in a single OpenAI message."""
+    openai_req = {
+        "model": "gpt-4o",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Compare these"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{TINY_BASE64}"}},
+                    {"type": "image_url", "image_url": {"url": f"data:image/webp;base64,{TINY_BASE64}"}}
+                ]
+            }
+        ],
+        "max_tokens": 1024
+    }
+
+    anth_req = openai_to_anthropic_request(openai_req, "claude-3-5-sonnet")
+
+    content = anth_req["messages"][0]["content"]
+    assert len(content) == 3
+    assert content[0]["type"] == "text"
+    assert content[1]["type"] == "image"
+    assert content[1]["source"]["media_type"] == "image/png"
+    assert content[2]["type"] == "image"
+    assert content[2]["source"]["media_type"] == "image/webp"
+
+
+def test_roundtrip_image_preserves_data():
+    """Test that Anthropic -> OpenAI -> Anthropic roundtrip preserves image data."""
+    anth_req = {
+        "model": "claude-3-5-sonnet",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Look"},
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/png", "data": TINY_BASE64}
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 1024
+    }
+
+    openai_req = anthropic_to_openai_request(anth_req, "gpt-4o")
+    roundtrip = openai_to_anthropic_request(openai_req, "claude-3-5-sonnet")
+
+    msg = roundtrip["messages"][0]
+    assert msg["content"][0]["type"] == "text"
+    assert msg["content"][0]["text"] == "Look"
+    img = msg["content"][1]
+    assert img["type"] == "image"
+    assert img["source"]["type"] == "base64"
+    assert img["source"]["media_type"] == "image/png"
+    assert img["source"]["data"] == TINY_BASE64
+
+
+def test_sanitize_preserves_image_url():
+    """Test that sanitize_openai_payload preserves image_url content blocks."""
+    openai_payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Look at this"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{TINY_BASE64}"}}
+                ]
+            }
+        ]
+    }
+
+    sanitized = sanitize_openai_payload(openai_payload, is_gemini=False)
+
+    content = sanitized["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert len(content) == 2
+    assert content[0]["type"] == "text"
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"] == f"data:image/png;base64,{TINY_BASE64}"
+
+
+def test_sanitize_flattens_text_only():
+    """Test that sanitize still flattens text-only content to string."""
+    openai_payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Hello"},
+                    {"type": "text", "text": "World"}
+                ]
+            }
+        ]
+    }
+
+    sanitized = sanitize_openai_payload(openai_payload, is_gemini=False)
+
+    content = sanitized["messages"][0]["content"]
+    assert isinstance(content, str)
+    assert content == "HelloWorld"
+
+def test_anthropic_tool_result_with_image():
+    """Test that Anthropic tool_result with image content preserves images for OpenAI providers."""
+    anth_req = {
+        "model": "claude-3-5-sonnet",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Let me read that file"},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_read_123",
+                        "name": "Read",
+                        "input": {"file_path": "/tmp/image.jpg"}
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_read_123",
+                        "content": [
+                            {"type": "text", "text": "File contents:"},
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/jpeg",
+                                    "data": TINY_BASE64
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 1024
+    }
+
+    openai_req = anthropic_to_openai_request(anth_req, "gpt-4o")
+
+    tool_msg = openai_req["messages"][1]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["tool_call_id"] == "toolu_read_123"
+    # Content should preserve text and image blocks
+    assert isinstance(tool_msg["content"], list)
+    assert len(tool_msg["content"]) == 2
+    assert tool_msg["content"][0]["type"] == "text"
+    assert tool_msg["content"][0]["text"] == "File contents:"
+    assert tool_msg["content"][1]["type"] == "image_url"
+    assert "data:image/jpeg;base64," in tool_msg["content"][1]["image_url"]["url"]
 

@@ -8,7 +8,10 @@ from typing import Any, Dict
 from .base import BaseProvider
 from .translation import anthropic_to_openai_request, openai_to_anthropic_response, sanitize_openai_payload
 from ..translation.stream_base import AnthropicToOpenAIStreamTranslator, PassthroughStreamTranslator
+import logging
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 class OpenAIProvider(BaseProvider):
     """Provider for OpenAI-compatible APIs (OpenAI, OpenRouter, etc.)"""
@@ -18,6 +21,7 @@ class OpenAIProvider(BaseProvider):
     
     def wrap_request(self, anthropic_request: Dict[str, Any]) -> Dict[str, Any]:
         """Convert Anthropic request to OpenAI format with sanitization."""
+        logger.info("[OPEN AI] wrapping request")
         wrapped = anthropic_to_openai_request(anthropic_request, self.model_name)
         return sanitize_openai_payload(wrapped, is_gemini=False)
     

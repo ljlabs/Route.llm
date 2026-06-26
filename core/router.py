@@ -20,6 +20,7 @@ from .rate_limiter import RateLimiter, PerProviderRateLimiter, get_per_provider_
 import database as db
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 stream_logger = logging.getLogger("streaming")
 
 
@@ -109,6 +110,7 @@ class RouterService:
             anthropic_request["max_tokens"] = effective_max_tokens
 
         # Wrap request to provider format
+        logger.info("[ROUTER] wrapping request")
         wrapped_request = provider.wrap_request(anthropic_request)
 
         try:
@@ -403,8 +405,12 @@ class RouterService:
                 if isinstance(content, str): text += content
                 elif isinstance(content, list):
                     for item in content:
-                        if isinstance(item, dict) and item.get("type") == "text":
-                            text += item.get("text", "")
+                        if isinstance(item, dict):
+                            if item.get("type") == "text":
+                                text += item.get("text", "")
+                            elif item.get("type") == "image_url":
+                                # Estimate ~85 tokens per image (OpenAI pricing)
+                                text += "x" * 340
             return self._estimate_tokens(text) if text else self._estimate_tokens(str(request_body))
         except Exception:
             return self._estimate_tokens(str(request_body))
