@@ -16,9 +16,10 @@ def _anthropic_image_to_openai(part: dict) -> dict:
     media_type = source.get("media_type", "image/png")
     data = source.get("data", "")
     return {
-        "type": "image",
-        "mime_type": media_type,
-        "data": f"{data}"
+        "type": "image_url",
+        "image_url": {
+            "url": f"data:{media_type};base64,{data}"
+        }
     }
 
 
@@ -168,31 +169,52 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
                         }
                     tool_calls.append(tool_call)
                 elif part_type == "tool_result":
-                    # In OpenAI, tool results must be separate messages with role "tool"
-                    # We append them directly to the main messages list
+                    # Split tool results: text goes in the "tool" role message,
+                    # images go in a subsequent "user" message per the OpenAI multi-turn pattern.
                     tool_result_content = part.get("content")
+                    text_parts = []
+                    image_parts = []
+
                     if isinstance(tool_result_content, list):
-                        # Preserve images and text in tool results
-                        result_parts = []
                         for sub_part in tool_result_content:
                             if isinstance(sub_part, dict):
                                 if sub_part.get("type") == "text":
-                                    result_parts.append({"type": "text", "text": sub_part.get("text", "")})
+                                    text_parts.append(sub_part.get("text", ""))
                                 elif sub_part.get("type") == "image":
-                                    result_parts.append(_anthropic_image_to_openai(sub_part))
-                        tool_result_content = result_parts if result_parts else ""
-                    else:
-                        tool_result_content = str(tool_result_content) if tool_result_content else ""
+                                    image_parts.append(_anthropic_image_to_openai(sub_part))
+                    elif isinstance(tool_result_content, str):
+                        text_parts.append(tool_result_content)
 
                     tool_use_id = part.get("tool_use_id")
                     if tool_use_id and SIGNATURE_SEPARATOR in tool_use_id:
                         tool_use_id = tool_use_id.split(SIGNATURE_SEPARATOR)[0]
 
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_use_id,
-                        "content": tool_result_content
-                    })
+                    if image_parts:
+                        # Acknowledge the tool ran with a simple text confirmation
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_use_id,
+                            "content": json.dumps({"status": "success", "message": "Image loaded into context."})
+                        })
+                        # Append the image(s) as a separate user message
+                        user_image_content = []
+                        if text_parts:
+                            user_image_content.append({"type": "text", "text": "".join(text_parts)})
+                        else:
+                            user_image_content.append({"type": "text", "text": "Here is the image you requested from the file path:"})
+                        user_image_content.extend(image_parts)
+                        messages.append({
+                            "role": "user",
+                            "content": user_image_content
+                        })
+                    else:
+                        # No images — plain text tool result, standard tool role message
+                        tool_text = "".join(text_parts) if text_parts else ""
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_use_id,
+                            "content": tool_text
+                        })
             
             # If there's text, tool calls, or images for this turn, append the message
             if text_content or tool_calls or image_blocks:
