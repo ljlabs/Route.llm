@@ -13,7 +13,7 @@ pip install -r requirements.txt
 :start
 echo(
 echo Server is launching. To access the portal, go to:
-echo http://127.0.0.1:8000
+echo http://0.0.0.0:8000
 echo(
 echo Press Ctrl+C in this window to stop the server.
 echo(
