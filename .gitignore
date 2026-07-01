@@ -1,5 +1,6 @@
 **/*.pyc
 **/*.db
+**/*.db*
 **/venv/*
 .tmp_workspace/*
 load_test/output/*

@@ -472,6 +472,40 @@ def get_logs():
 
     conn.close()
     return log_list
+def get_logs_metadata():
+    """Get all logs without lifecycle events (metadata only for fast initial load)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            id, 
+            timestamp, 
+            provider_name, 
+            request_method, 
+            request_path, 
+            response_status, 
+            latency_ms, 
+            tokens_sent, 
+            tokens_received
+        FROM logs 
+        ORDER BY id DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_log_events(log_id):
+    """Get lifecycle events for a specific log."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT stage, timestamp, body, status_code FROM log_events WHERE request_id = ? ORDER BY id ASC",
+        (log_id,)
+    )
+    events = [dict(e) for e in cursor.fetchall()]
+    conn.close()
+    return events
+
 def clear_logs():
     """Clear all logs from the database."""
     conn = get_db_connection()

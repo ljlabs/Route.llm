@@ -392,6 +392,7 @@ async function saveSettings() {
 
 // Logs fetching and inspection
 let allLogs = [];
+let logEventsCache = {}; // Cache for log events to avoid re-fetching
 
 // ─── Shimmer skeleton helpers ───────────────────────────────────────────────
 
@@ -443,14 +444,15 @@ function skeletonMetrics() {
     `;
 }
 
-// ─── fetchLogs with shimmer ──────────────────────────────────────────────────
+// ─── fetchLogs with lazy loading and caching ────────────────────────────────
 
 async function fetchLogs() {
     const historyContainer = document.getElementById("logs-history");
     // Show shimmer while loading
     historyContainer.innerHTML = skeletonLogEntries(5);
     try {
-        const res = await fetch("/api/logs");
+        // Fetch only metadata (fast initial load without events)
+        const res = await fetch("/api/logs/metadata");
         allLogs = await res.json();
         renderLogsList();
     } catch (err) {
@@ -477,9 +479,9 @@ function renderLogsList() {
         entry.className = "log-entry";
         entry.onclick = () => showLogDetail(index, entry);
 
-        const stageCount = (log.events || []).length;
+        // For lazy-loaded metadata, we don't have events count yet, so show status only
         const stageLabel = isPending
-            ? `<span class="log-status timeline-status pending">⏳ stage ${stageCount}/4</span>`
+            ? `<span class="log-status timeline-status pending">⏳ pending</span>`
             : `<span class="log-status ${log.response_status < 400 ? 'status-success' : 'status-error'}">${log.response_status}</span>`;
 
         entry.innerHTML = `
@@ -502,6 +504,42 @@ function showLogDetail(index, element) {
     element.classList.add("active-entry");
 
     const log = allLogs[index];
+    const detailPane = document.getElementById("log-detail");
+
+    // Show loading state while fetching events if not in cache
+    if (!logEventsCache[log.id]) {
+        detailPane.innerHTML = `<h3>Log Inspector</h3><div style="margin-top: 20px; text-align: center; color: var(--text-secondary);">Loading log details...</div>`;
+        
+        // Fetch events from API
+        fetchLogEvents(log.id, index, element);
+        return;
+    }
+
+    // Events are cached, render immediately
+    renderLogDetailContent(log, logEventsCache[log.id]);
+}
+
+async function fetchLogEvents(logId, index, element) {
+    try {
+        const res = await fetch(`/api/logs/${logId}/events`);
+        const events = await res.json();
+        
+        // Cache the events
+        logEventsCache[logId] = events;
+        
+        // Update the log object with events for consistency
+        allLogs[index].events = events;
+        
+        // Render with fetched events
+        const log = allLogs[index];
+        renderLogDetailContent(log, events);
+    } catch (err) {
+        console.error("Failed to fetch log events:", err);
+        document.getElementById("log-detail").innerHTML = `<h3>Log Inspector</h3><div style="margin-top: 20px; color: var(--text-secondary);">Failed to load log details.</div>`;
+    }
+}
+
+function renderLogDetailContent(log, logEvents) {
     const detailPane = document.getElementById("log-detail");
 
     // Pretty print json helper
@@ -574,7 +612,7 @@ function showLogDetail(index, element) {
     contentDiv.appendChild(generalSection);
 
     // Lifecycle Timeline
-    const events = log.events || [];
+    const events = logEvents || [];
     if (events.length > 0) {
         const timelineSection = document.createElement("div");
         timelineSection.className = "detail-section";
@@ -1009,29 +1047,33 @@ async function updateMetricsCharts() {
     });
 
     try {
-        const [summaryRes, historyRes] = await Promise.all([
-            fetch("/api/metrics"),
-            fetch("/api/metrics/history")
-        ]);
-        
+        // Load metrics summary first (fast)
+        const summaryRes = await fetch("/api/metrics");
         const summaryData = await summaryRes.json();
+        
+        // Render summary charts immediately
+        renderMetricsChartsWithSummary(summaryData);
+        
+        // Load history in background (this can be slow)
+        const historyRes = await fetch("/api/metrics/history");
         const historyData = await historyRes.json();
         
-        renderMetricsCharts(summaryData, historyData);
+        // Update history chart once loaded
+        renderLatencyHistoryChart(historyData);
     } catch (err) {
         console.error("Error updating metrics charts:", err);
     }
 }
 
-function renderMetricsCharts(summaryData, historyData) {
+function renderMetricsChartsWithSummary(summaryData) {
     const labels = summaryData.map(m => m.provider_name);
     const requestCounts = summaryData.map(m => m.request_count);
     const tokensSent = summaryData.map(m => m.total_tokens_sent);
     const tokensReceived = summaryData.map(m => m.total_tokens_received);
     const avgLatencies = summaryData.map(m => m.avg_latency);
 
-    // Remove shimmer skeletons and show canvases
-    ["chart-latency-history", "chart-requests", "chart-tokens", "chart-latency"].forEach(id => {
+    // Remove shimmer skeletons from summary charts
+    ["chart-requests", "chart-tokens", "chart-latency"].forEach(id => {
         const parent = document.getElementById(id)?.parentElement;
         if (parent) {
             const skeletons = parent.querySelectorAll(".skeleton-chart");
@@ -1063,49 +1105,6 @@ function renderMetricsCharts(summaryData, historyData) {
             }
         }
     };
-
-    // Latency History (Line Chart)
-    if (metricsCharts.history) metricsCharts.history.destroy();
-    
-    // Group history by provider
-    const providers = [...new Set(historyData.map(h => h.provider_name))];
-    const datasets = providers.map((p) => {
-        const providerData = historyData.filter(h => h.provider_name === p);
-        const color = getProviderColor(p);
-        return {
-            label: p,
-            data: providerData.map(h => ({ x: new Date(h.timestamp).getTime(), y: h.latency_ms })),
-            borderColor: color,
-            backgroundColor: getProviderColor(p, 0.1),
-            borderWidth: 2,
-            tension: 0.3,
-            pointRadius: 2,
-            fill: false
-        };
-    });
-
-    metricsCharts.history = new Chart(document.getElementById("chart-latency-history"), {
-        type: 'line',
-        data: { datasets },
-        options: {
-            ...commonOptions,
-            scales: {
-                ...commonOptions.scales,
-                x: {
-                    type: 'linear',
-                    grid: { display: false },
-                    ticks: {
-                        color: '#a0a0a0',
-                        maxRotation: 0,
-                        callback: function(val) {
-                            const date = new Date(val);
-                            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                        }
-                    }
-                }
-            }
-        }
-    });
 
     // Request Volume Chart
     if (metricsCharts.requests) metricsCharts.requests.destroy();
@@ -1152,8 +1151,18 @@ function renderMetricsCharts(summaryData, historyData) {
         options: {
             ...commonOptions,
             scales: {
-                x: { ...commonOptions.scales.x, stacked: true },
-                y: { ...commonOptions.scales.y, stacked: true }
+                ...commonOptions.scales,
+                y: {
+                    beginAtZero: true,
+                    stacked: true,
+                    grid: { color: 'rgba(255,255,255,0.1)' },
+                    ticks: { color: '#a0a0a0', font: { family: 'Inter' } }
+                },
+                x: {
+                    stacked: true,
+                    grid: { display: false },
+                    ticks: { color: '#a0a0a0', font: { family: 'Inter' } }
+                }
             }
         }
     });
@@ -1165,7 +1174,7 @@ function renderMetricsCharts(summaryData, historyData) {
         data: {
             labels: labels,
             datasets: [{
-                label: 'Latency (ms)',
+                label: 'Avg Latency (ms)',
                 data: avgLatencies,
                 backgroundColor: labels.map(name => getProviderColor(name)),
                 borderRadius: 4
@@ -1173,9 +1182,78 @@ function renderMetricsCharts(summaryData, historyData) {
         },
         options: {
             ...commonOptions,
+            scales: {
+                ...commonOptions.scales,
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(255,255,255,0.1)' },
+                    ticks: { color: '#a0a0a0', font: { family: 'Inter' } }
+                }
+            }
+        }
+    });
+}
+
+function renderLatencyHistoryChart(historyData) {
+    // Remove shimmer skeleton from history chart
+    const parent = document.getElementById("chart-latency-history")?.parentElement;
+    if (parent) {
+        const skeletons = parent.querySelectorAll(".skeleton-chart");
+        skeletons.forEach(s => s.remove());
+        const canvas = document.getElementById("chart-latency-history");
+        if (canvas) {
+            canvas.style.display = "";
+        }
+    }
+
+    // Group history by provider
+    const providers = [...new Set(historyData.map(h => h.provider_name))];
+    const datasets = providers.map((p) => {
+        const providerData = historyData.filter(h => h.provider_name === p);
+        const color = getProviderColor(p);
+        return {
+            label: p,
+            data: providerData.map(h => ({ x: new Date(h.timestamp).getTime(), y: h.latency_ms })),
+            borderColor: color,
+            backgroundColor: getProviderColor(p, 0.1),
+            borderWidth: 2,
+            tension: 0.3,
+            pointRadius: 2,
+            fill: false
+        };
+    });
+
+    if (metricsCharts.history) metricsCharts.history.destroy();
+    
+    metricsCharts.history = new Chart(document.getElementById("chart-latency-history"), {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
             plugins: {
-                ...commonOptions.plugins,
-                legend: { display: false } // Hide legend for single-dataset bar chart
+                legend: {
+                    labels: { color: '#a0a0a0', font: { family: 'Inter' } }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(255,255,255,0.1)' },
+                    ticks: { color: '#a0a0a0', font: { family: 'Inter' } }
+                },
+                x: {
+                    type: 'linear',
+                    grid: { display: false },
+                    ticks: {
+                        color: '#a0a0a0',
+                        maxRotation: 0,
+                        callback: function(val) {
+                            const date = new Date(val);
+                            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                        }
+                    }
+                }
             }
         }
     });
