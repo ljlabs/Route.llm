@@ -1165,3 +1165,141 @@ def test_long_conversation_no_message_loss():
             if tool_results:
                 # Should have multiple tool results in one message, not separate ones
                 assert len(tool_results) > 1 or len(tool_result_msgs) > 1
+
+
+@pytest.mark.anyio
+async def test_error_injection_not_as_content():
+    """Stream errors are not injected as model content (Fix #4)."""
+    import json
+    from core.translation.stream_base import OpenAIToAnthropicStreamTranslator
+    
+    # Create stream lines with an error condition
+    stream_lines = [
+        'data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1783322214,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}',
+        'data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1783322214,"choices":[{"index":0,"delta":{"content":"Start"},"finish_reason":null}]}',
+        # Intentionally malformed to trigger error handling
+        'data: [BROKEN'
+    ]
+    
+    # Create mock response
+    class MockResponse:
+        def __init__(self, chunks):
+            self.chunks = chunks
+        
+        async def aiter_lines(self):
+            for chunk in self.chunks:
+                yield chunk
+        
+        async def aclose(self):
+            pass
+    
+    mock_response = MockResponse(stream_lines)
+    provider_config = {"name": "test", "model_name": "gpt-4"}
+    
+    translator = OpenAIToAnthropicStreamTranslator()
+    accumulated_blocks = []
+    
+    chunks = []
+    async for chunk in translator.translate_stream(mock_response, provider_config, accumulated_blocks):
+        chunks.append(chunk)
+    
+    # Verify error handling output
+    output = "".join(chunks)
+    # Should have valid Anthropic format output
+    assert "message_start" in output or "content_block" in output
+    # Should NOT have "[Stream Error:" injected as content
+    assert "[Stream Error:" not in output
+    # Should have proper clean termination
+    assert "stop_reason" in output or "message_stop" in output or "message_delta" in output
+
+
+@pytest.mark.anyio  
+async def test_thinking_blocks_passed_through():
+    """Extended thinking blocks are passed through as content (Fix #6)."""
+    import json
+    from core.translation.stream_base import AnthropicToOpenAIStreamTranslator
+    
+    # Create stream with thinking blocks
+    stream_lines = [
+        'data: {"type":"message_start","message":{"id":"msg_456"}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"I need to think about this..."}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"text"}}',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The answer is..."}}',
+        'data: {"type":"content_block_stop","index":1}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+        'data: [DONE]'
+    ]
+    
+    class MockResponse:
+        def __init__(self, chunks):
+            self.chunks = chunks
+        
+        async def aiter_lines(self):
+            for chunk in self.chunks:
+                yield chunk
+        
+        async def aclose(self):
+            pass
+    
+    mock_response = MockResponse(stream_lines)
+    provider_config = {"name": "test", "model_name": "claude-3"}
+    
+    translator = AnthropicToOpenAIStreamTranslator()
+    accumulated_blocks = []
+    
+    chunks = []
+    async for chunk in translator.translate_stream(mock_response, provider_config, accumulated_blocks):
+        chunks.append(chunk)
+    
+    output = "".join(chunks)
+    # Verify thinking content is preserved
+    assert "thinking" in output.lower() or "I need to think" in output
+    # Verify answer text is also preserved
+    assert "The answer is" in output
+
+
+@pytest.mark.anyio
+async def test_phantom_text_block_not_emitted():
+    """Phantom empty text block is not emitted for tool-only responses (Fix #7)."""
+    import json
+    from core.translation.stream_base import OpenAIToAnthropicStreamTranslator
+    
+    # Create stream with ONLY tool calls, no text
+    stream_lines = [
+        'data: {"id":"chatcmpl-789","object":"chat.completion.chunk","created":1783322214,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}',
+        'data: {"id":"chatcmpl-789","object":"chat.completion.chunk","created":1783322214,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}',
+        'data: {"id":"chatcmpl-789","object":"chat.completion.chunk","created":1783322214,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]},"finish_reason":null}]}',
+        'data: {"id":"chatcmpl-789","object":"chat.completion.chunk","created":1783322214,"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}',
+        "data: [DONE]"
+    ]
+    
+    class MockResponse:
+        def __init__(self, chunks):
+            self.chunks = chunks
+        
+        async def aiter_lines(self):
+            for chunk in self.chunks:
+                yield chunk
+        
+        async def aclose(self):
+            pass
+    
+    mock_response = MockResponse(stream_lines)
+    provider_config = {"name": "test", "model_name": "gpt-4"}
+    
+    translator = OpenAIToAnthropicStreamTranslator()
+    accumulated_blocks = []
+    
+    chunks = []
+    async for chunk in translator.translate_stream(mock_response, provider_config, accumulated_blocks):
+        chunks.append(chunk)
+    
+    output = "".join(chunks)
+    # Parse output to count content_block_start events
+    content_block_starts = output.count('"type":"content_block_start"')
+    
+    # Should NOT have a phantom text content_block_start for tool-only response
+    # Only tool_use should have started
+    assert content_block_starts <= 1  # At most 1 for tool_use, NOT 2 (tool_use + phantom text)
