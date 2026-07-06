@@ -147,69 +147,156 @@ def test_embedding_provider_in_db(tmp_path):
 
 # --- Integration Tests ---
 
-# Note: These are integration tests that require both mock server and embedding server running.
-# They test the end-to-end embedding request flow through the proxy.
-
-EMBEDDING_PORT = 8081
-EMBEDDING_URL = f"http://127.0.0.1:{EMBEDDING_PORT}"
-MOCK_SERVER_URL = "http://127.0.0.1:9001"
-INTEGRATION_DB = "integ_test.db"
-
-
-import atexit
-import signal
-
-# Track all spawned integration test processes for cleanup
-_integ_procs: list = []
-
-def _kill_all_integ_procs():
-    """Kill all integration test server processes. Called on exit or signal."""
-    for p in _integ_procs:
-        if p.poll() is None:
-            p.terminate()
-            try:
-                p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                p.kill()
-
-atexit.register(_kill_all_integ_procs)
-
-# Register signal handlers so Ctrl+C also triggers cleanup
-for _sig in (signal.SIGTERM, signal.SIGINT):
-    try:
-        signal.signal(_sig, lambda s, f: (_kill_all_integ_procs(), sys.exit(1)))
-    except (OSError, ValueError):
-        pass  # may fail on non-main thread
-
-
-@pytest.fixture(scope="module")
-async def embedding_server():
-    """Fixture for embedding server integration tests - skipped by default."""
-    # These integration tests require manual server setup via run_integration.py
-    # For unit testing purposes, we skip them here
-    pytest.skip("Embedding integration tests require servers started via load_test/run_integration.py")
-
-
 @pytest.mark.anyio
-async def test_embedding_no_provider_returns_400(embedding_server):
+async def test_embedding_no_provider_returns_400():
     """Embedding endpoint returns 400 when no provider is configured."""
-    # This test verifies that the embedding endpoint properly rejects requests
-    # when no embedding provider is configured
-    pass
+    from core.embedding.router import EmbeddingRouterService
+    from core.rate_limiter import PerProviderRateLimiter
+    from infrastructure.http_client import init_http_client
+    from fastapi import HTTPException
+    
+    # Create a router service with no providers
+    http_client = init_http_client()
+    router_service = EmbeddingRouterService(http_client, PerProviderRateLimiter())
+    
+    # Mock get_active_embedding_provider to return None
+    original_get = db.get_active_embedding_provider
+    db.get_active_embedding_provider = lambda: None
+    
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            await router_service.route_embedding_request({
+                "model": "unknown",
+                "input": "test"
+            })
+        assert exc_info.value.status_code == 400
+        assert "No active embedding provider" in exc_info.value.detail
+    finally:
+        db.get_active_embedding_provider = original_get
+        await http_client.close()
 
 
 @pytest.mark.anyio
-async def test_embedding_provider_crud(embedding_server):
-    """Embedding providers can be created, retrieved, and deleted via API."""
-    # This test verifies that embedding providers can be managed through the API
-    pass
+async def test_embedding_provider_crud():
+    """Embedding provider CRUD operations work correctly."""
+    # Create temporary database
+    temp_db = "test_embedding_crud.db"
+    original_db = db.DB_PATH
+    db.DB_PATH = temp_db
+    
+    try:
+        db.init_db()
+        
+        # Test CREATE
+        db.add_provider(
+            name="Test Embedding 1",
+            api_type="embedding",
+            endpoint_url="http://test1.com/embeddings",
+            api_key="key1",
+            model_name="model1",
+            is_active=0
+        )
+        
+        providers = db.get_providers()
+        assert len(providers) >= 1
+        test_prov = [p for p in providers if p["name"] == "Test Embedding 1"][0]
+        assert test_prov["model_name"] == "model1"
+        
+        # Test UPDATE
+        db.update_provider(
+            test_prov["id"],
+            name="Test Embedding Updated",
+            api_type="embedding",
+            endpoint_url="http://test1-updated.com/embeddings",
+            api_key="key1-updated",
+            model_name="model1-updated",
+            is_active=0
+        )
+        
+        providers = db.get_providers()
+        updated = [p for p in providers if p["id"] == test_prov["id"]][0]
+        assert updated["name"] == "Test Embedding Updated"
+        assert updated["model_name"] == "model1-updated"
+        
+        # Test DELETE
+        db.delete_provider(test_prov["id"])
+        providers = db.get_providers()
+        deleted = [p for p in providers if p["id"] == test_prov["id"]]
+        assert len(deleted) == 0
+        
+    finally:
+        db.DB_PATH = original_db
+        if os.path.exists(temp_db):
+            os.remove(temp_db)
 
 
 @pytest.mark.anyio
-async def test_embedding_route_with_provider(embedding_server):
-    """Embedding request routes to provider and logs the request."""
-    # This test verifies that embedding requests are properly routed and logged
-    pass
+async def test_embedding_route_with_provider():
+    """Embedding request routing and logging works correctly."""
+    from core.embedding.router import EmbeddingRouterService
+    from core.rate_limiter import PerProviderRateLimiter
+    from infrastructure.http_client import init_http_client
+    from unittest.mock import AsyncMock, MagicMock
+    
+    # Create temporary database with provider
+    temp_db = "test_embedding_route.db"
+    original_db = db.DB_PATH
+    db.DB_PATH = temp_db
+    
+    try:
+        db.init_db()
+        db.clear_logs()
+        
+        # Add a test provider
+        db.add_provider(
+            name="Test Embedding Provider",
+            api_type="embedding",
+            endpoint_url="http://mock-embedding.test/v1/embeddings",
+            api_key="test-key",
+            model_name="test-embedding-model",
+            is_active=0
+        )
+        
+        # Get provider and set as active embedding
+        providers = db.get_providers()
+        provider = [p for p in providers if p["name"] == "Test Embedding Provider"][0]
+        db.set_active_embedding_provider(provider["id"])
+        
+        # Create router with mocked HTTP client
+        http_client = AsyncMock()
+        http_client.post = AsyncMock(return_value=MagicMock(
+            status_code=200,
+            text='{"data": [{"embedding": [0.1, 0.2], "index": 0}], "usage": {"prompt_tokens": 5, "total_tokens": 5}, "model": "test-embedding-model"}',
+            json=MagicMock(return_value={
+                "data": [{"embedding": [0.1, 0.2], "index": 0}],
+                "usage": {"prompt_tokens": 5, "total_tokens": 5},
+                "model": "test-embedding-model"
+            })
+        ))
+        
+        router_service = EmbeddingRouterService(http_client, PerProviderRateLimiter())
+        
+        # Make request
+        response = await router_service.route_embedding_request({
+            "model": "test-embedding-model",
+            "input": "test embedding"
+        })
+        
+        # Verify response
+        assert response.status_code == 200
+        data = response.body
+        assert b"embedding" in data
+        
+        # Verify logging occurred
+        logs = db.get_logs()
+        assert len(logs) > 0
+        request_logs = [l for l in logs if l["request_path"] == "/v1/embeddings"]
+        assert len(request_logs) > 0
+        
+    finally:
+        db.DB_PATH = original_db
+        if os.path.exists(temp_db):
+            os.remove(temp_db)
 
 
 
