@@ -48,6 +48,7 @@ def sanitize_openai_payload(payload: dict, is_gemini: bool = False) -> dict:
     """
     Defensively strips Anthropic-specific or non-standard fields (like cache_control)
     and ensures content blocks are in a format strict APIs (like Mistral) expect.
+    Preserves the original ordering of content blocks.
     """
     if "messages" not in payload:
         return payload
@@ -60,10 +61,10 @@ def sanitize_openai_payload(payload: dict, is_gemini: bool = False) -> dict:
         
         content = message.get("content")
         
-        # 1. Flatten list content to string if it's purely text to avoid strict API errors
+        # 1. Handle list content - preserve ordering but strip cache_control
         if isinstance(content, list):
             text_parts = []
-            non_text_parts = []
+            has_non_text = False
             
             for part in content:
                 if isinstance(part, dict):
@@ -73,19 +74,17 @@ def sanitize_openai_payload(payload: dict, is_gemini: bool = False) -> dict:
                     if part.get("type") == "text":
                         text_parts.append(part.get("text", ""))
                     else:
-                        non_text_parts.append(part)
+                        has_non_text = True
                 elif isinstance(part, str):
                     text_parts.append(part)
             
-            if text_parts and not non_text_parts:
+            # If only text parts, flatten to string
+            if text_parts and not has_non_text:
                 message["content"] = "".join(text_parts)
-            elif text_parts or non_text_parts:
-                # Keep as list but ensure text part is clean
-                new_content = []
-                if text_parts:
-                    new_content.append({"type": "text", "text": "".join(text_parts)})
-                new_content.extend(non_text_parts)
-                message["content"] = new_content
+            # If mixed or only non-text, keep as list with original ordering
+            elif not (text_parts and not has_non_text):
+                # Content stays as list with cache_control stripped above
+                pass
         
         # 2. Strip any other top-level non-standard fields from message if they exist
         if isinstance(message, dict):
@@ -281,6 +280,7 @@ def openai_to_anthropic_request(openai_req: dict, target_model: str) -> dict:
     """Translates OpenAI /v1/chat/completions request to Anthropic /v1/messages request (including tools)"""
     messages = []
     system_prompt = None
+    tool_results_buffer = []  # Buffer to accumulate consecutive tool results
     
     for msg in openai_req.get("messages", []):
         role = msg.get("role")
@@ -290,8 +290,7 @@ def openai_to_anthropic_request(openai_req: dict, target_model: str) -> dict:
         if role == "system":
             system_prompt = content
         elif role == "tool":
-            # Translate OpenAI tool response back to Anthropic tool_result block
-            # For simplicity, we wrap it in a user message
+            # Accumulate tool results into a buffer
             tool_result_content = []
             if content:
                 if isinstance(content, list):
@@ -305,17 +304,20 @@ def openai_to_anthropic_request(openai_req: dict, target_model: str) -> dict:
                 elif isinstance(content, str):
                     tool_result_content.append({"type": "text", "text": content})
             
-            messages.append({
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": msg.get("tool_call_id"),
-                        "content": tool_result_content if tool_result_content else ""
-                    }
-                ]
+            tool_results_buffer.append({
+                "type": "tool_result",
+                "tool_use_id": msg.get("tool_call_id"),
+                "content": tool_result_content if tool_result_content else ""
             })
         else:
+            # When we hit a non-tool message, flush the tool results buffer first
+            if tool_results_buffer:
+                messages.append({
+                    "role": "user",
+                    "content": tool_results_buffer
+                })
+                tool_results_buffer = []
+            
             anth_content = []
             if content:
                 if isinstance(content, list):
@@ -358,6 +360,14 @@ def openai_to_anthropic_request(openai_req: dict, target_model: str) -> dict:
                 "role": role,
                 "content": anth_content if anth_content else ""
             })
+    
+    # Flush any remaining tool results at the end
+    if tool_results_buffer:
+        messages.append({
+            "role": "user",
+            "content": tool_results_buffer
+        })
+            
             
     anth_req = {
         "model": target_model,

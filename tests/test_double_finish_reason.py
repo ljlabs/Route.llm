@@ -23,7 +23,7 @@ With this fix:
 
 import json
 import pytest
-from core.translation.stream_base import AnthropicToOpenAIStreamTranslator
+from core.translation.stream_base import OpenAIToAnthropicStreamTranslator
 
 
 class MockStreamResponse:
@@ -61,7 +61,7 @@ class TestDoubleFinishReasonFix:
         ]
         
         response = MockStreamResponse(chunks)
-        translator = AnthropicToOpenAIStreamTranslator()
+        translator = OpenAIToAnthropicStreamTranslator()
         accumulated_blocks = []
         
         output_lines = []
@@ -99,7 +99,7 @@ class TestDoubleFinishReasonFix:
         ]
         
         response = MockStreamResponse(chunks)
-        translator = AnthropicToOpenAIStreamTranslator()
+        translator = OpenAIToAnthropicStreamTranslator()
         accumulated_blocks = []
         
         output_lines = []
