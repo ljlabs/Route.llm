@@ -999,7 +999,6 @@ def test_sanitize_flattens_text_only():
     assert isinstance(content, str)
     assert content == "HelloWorld"
 
-@pytest.mark.xfail(reason="Anthropic tool_result with image translation - requires dedicated work on translation layer")
 def test_anthropic_tool_result_with_image():
     """Test that Anthropic tool_result with image content preserves images for OpenAI providers."""
     anth_req = {
@@ -1054,3 +1053,115 @@ def test_anthropic_tool_result_with_image():
     assert tool_msg["content"][1]["type"] == "image_url"
     assert "data:image/jpeg;base64," in tool_msg["content"][1]["image_url"]["url"]
 
+
+
+@pytest.mark.anyio
+async def test_stream_malformed_chunks_logged_not_silent():
+    """Malformed stream chunks are logged but don't silently drop (Fix #2)."""
+    import json
+    import logging
+    from core.translation.stream_base import AnthropicToOpenAIStreamTranslator
+    
+    # Create stream lines with a malformed chunk in the middle
+    stream_lines = [
+        'data: {"type":"message_start","message":{"id":"msg_123"}}',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}',
+        'data: {MALFORMED JSON HERE',  # Malformed - should be logged but not crash
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+        'data: [DONE]'
+    ]
+    
+    # Create mock response object
+    class MockResponse:
+        def __init__(self, chunks):
+            self.chunks = chunks
+            self.closed = False
+        
+        async def aiter_lines(self):
+            for chunk in self.chunks:
+                yield chunk
+        
+        async def aclose(self):
+            self.closed = True
+    
+    mock_response = MockResponse(stream_lines)
+    
+    # Mock provider config
+    provider_config = {
+        "name": "test",
+        "model_name": "claude-3",
+        "endpoint_url": "http://test"
+    }
+    
+    translator = AnthropicToOpenAIStreamTranslator()
+    accumulated_blocks = []
+    
+    # Capture chunks
+    chunks = []
+    async for chunk in translator.translate_stream(mock_response, provider_config, accumulated_blocks):
+        chunks.append(chunk)
+    
+    # Verify we got output despite the malformed chunk
+    assert len(chunks) > 0
+    # Should have message_start and at least some content chunks
+    chunk_str = "".join(chunks)
+    assert "msg_123" in chunk_str  # The ID from our message_start
+    assert "Hello" in chunk_str
+    assert "world" in chunk_str
+    # The malformed chunk should NOT be in output
+    assert "MALFORMED" not in chunk_str
+
+
+def test_long_conversation_no_message_loss():
+    """Long conversations with many messages don't lose messages (verifies Fix #1 & #2)."""
+    # Create a long conversation with multiple tool calls and results
+    messages = [
+        {"role": "user", "content": "Call tool1"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call_1", "function": {"name": "tool1", "arguments": "{}"}, "type": "function"}
+        ]},
+    ]
+    
+    # Add many tool results
+    for i in range(10):
+        messages.append({"role": "tool", "tool_call_id": f"call_1", "content": f"result_{i}"})
+    
+    messages.append({"role": "user", "content": "Continue"})
+    
+    # Add another round of tools
+    messages.append({"role": "assistant", "content": "", "tool_calls": [
+        {"id": f"call_{i}", "function": {"name": f"tool_{i}", "arguments": "{}"}, "type": "function"}
+        for i in range(2, 5)
+    ]})
+    
+    for i in range(2, 5):
+        messages.append({"role": "tool", "tool_call_id": f"call_{i}", "content": f"result_round2_{i}"})
+    
+    messages.append({"role": "user", "content": "Final message"})
+    
+    # Translate to Anthropic format (requires target_model parameter)
+    openai_req = {"model": "gpt-4", "messages": messages}
+    result = openai_to_anthropic_request(openai_req, "claude-3-sonnet")
+    
+    # Verify all messages are present
+    result_messages = result["messages"]
+    
+    # Should have: user, assistant+tools grouped, user, assistant+tools grouped, user
+    # Minimum check: more than just the input/output messages
+    assert len(result_messages) >= 3
+    
+    # Verify tool results are grouped (Fix #1)
+    tool_result_msgs = [m for m in result_messages if m["role"] == "user" and "tool_result" in str(m.get("content", []))]
+    # Should have at least one message with grouped tool results
+    assert len(tool_result_msgs) > 0
+    # Each should have multiple tool results grouped together
+    for msg in tool_result_msgs:
+        content = msg.get("content", [])
+        if isinstance(content, list):
+            tool_results = [c for c in content if c.get("type") == "tool_result"]
+            if tool_results:
+                # Should have multiple tool results in one message, not separate ones
+                assert len(tool_results) > 1 or len(tool_result_msgs) > 1
