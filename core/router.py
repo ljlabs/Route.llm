@@ -132,6 +132,7 @@ class RouterService:
                     req_body_str=req_body_str,
                     path="/v1/messages",
                     request_id=request_id,
+                    anthropic_request=anthropic_request,
                 )
         except HTTPException:
             raise
@@ -243,6 +244,7 @@ class RouterService:
                     path="/v1/chat/completions",
                     is_openai_target=True,
                     request_id=request_id,
+                    anthropic_request=anthropic_request,
                 )
         except HTTPException:
             raise
@@ -271,10 +273,25 @@ class RouterService:
         path: str = "/v1/messages",
         is_openai_target: bool = False,
         request_id: Optional[int] = None,
+        anthropic_request: Optional[Dict[str, Any]] = None,
     ) -> JSONResponse:
         """Handle non-streaming request."""
         import database as db
         logger.info(f"Routing non-streaming request to {provider.name}")
+
+        # Check if provider supports native PDF and request contains PDFs
+        if (anthropic_request is not None
+                and getattr(provider, 'supports_native_pdf', False)
+                and provider.detect_pdf_content(anthropic_request)):
+            return await self._handle_native_pdf_request(
+                provider=provider,
+                anthropic_request=anthropic_request,
+                original_request=original_request,
+                req_body_str=req_body_str,
+                path=path,
+                is_openai_target=is_openai_target,
+                request_id=request_id,
+            )
 
         # Stage 2 — about to send to provider
         provider_req_body = json.dumps(wrapped_request, indent=2)
@@ -342,6 +359,91 @@ class RouterService:
         final_response_str = json.dumps(response_json, indent=2)
 
         # Stage 4 — finalise the log row (also records client_response event)
+        db.complete_request_log(
+            request_id=request_id,
+            response_status=response.status_code,
+            response_body=final_response_str,
+            tokens_sent=tokens_sent,
+            tokens_received=tokens_received,
+            latency_ms=latency_ms,
+        )
+
+        return JSONResponse(content=final_response, status_code=200)
+
+    async def _handle_native_pdf_request(
+        self,
+        provider,
+        anthropic_request: Dict[str, Any],
+        original_request: Dict[str, Any],
+        req_body_str: str,
+        path: str = "/v1/messages",
+        is_openai_target: bool = False,
+        request_id: Optional[int] = None,
+    ) -> JSONResponse:
+        """Handle a request containing PDFs via Gemini's native generateContent endpoint."""
+        import database as db
+        logger.info(f"Routing native PDF request to {provider.name} via generateContent")
+
+        native_request = provider.build_native_pdf_request(anthropic_request)
+        native_endpoint = provider.build_native_pdf_endpoint()
+        native_headers = {
+            "x-goog-api-key": provider.api_key,
+            "Content-Type": "application/json"
+        }
+
+        # Stage 2 — log the native request
+        native_req_body = json.dumps(native_request, indent=2)
+        db.add_log_event(request_id, stage="provider_request", body=native_req_body)
+
+        start_time = time.perf_counter()
+
+        response = await self.http_client.post(
+            native_endpoint,
+            json=native_request,
+            headers=native_headers
+        )
+
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+
+        # Stage 3 — response received
+        raw_response_text = response.text
+        db.add_log_event(
+            request_id,
+            stage="provider_response",
+            body=raw_response_text,
+            status_code=response.status_code,
+        )
+
+        if response.status_code >= 400:
+            await self._handle_http_error(provider, response, req_body_str, path=path, request_id=request_id)
+
+        try:
+            gemini_response = response.json()
+        except Exception as e:
+            logger.error(f"Failed to parse native PDF response: {e}")
+            raise HTTPException(status_code=500, detail=f"Invalid JSON response: {str(e)}")
+
+        # Translate Gemini native response to Anthropic format
+        anthropic_response = provider.translate_native_response(gemini_response)
+
+        # Extract token usage
+        tokens_sent = anthropic_response.get("usage", {}).get("input_tokens", 0)
+        tokens_received = anthropic_response.get("usage", {}).get("output_tokens", 0)
+        if tokens_sent == 0:
+            tokens_sent = self._estimate_request_tokens(original_request)
+        if tokens_received == 0:
+            tokens_received = self._estimate_response_tokens(gemini_response)
+
+        # If target was OpenAI, translate back to OpenAI
+        if is_openai_target:
+            from .providers.translation import anthropic_to_openai_response
+            final_response = anthropic_to_openai_response(anthropic_response)
+        else:
+            final_response = anthropic_response
+
+        final_response_str = json.dumps(gemini_response, indent=2)
+
+        # Stage 4 — finalise log
         db.complete_request_log(
             request_id=request_id,
             response_status=response.status_code,
