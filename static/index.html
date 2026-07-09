@@ -80,7 +80,7 @@
                 <div class="section-header">
                     <div>
                         <h1>Model Routing</h1>
-                        <p class="subtitle">Map specific Model IDs to providers for targeted routing.</p>
+                        <p class="subtitle">Map specific Model IDs to providers (chat or embedding) for targeted routing.</p>
                     </div>
                     <div class="header-actions">
                         <button class="btn btn-primary" onclick="openRoutingModal()">+ Add Mapping</button>
@@ -100,6 +100,9 @@
                             <!-- Mappings will be injected dynamically -->
                         </tbody>
                     </table>
+                    <p class="subtitle" style="padding: 12px 16px; margin: 0; border-top: 1px solid rgba(255,255,255,0.05);">
+                        Tip: Click the provider dropdown to instantly switch which backend serves requests for this model ID.
+                    </p>
                 </div>
             </section>
 
