@@ -901,12 +901,19 @@ async function sendEmbeddingRequest() {
 }
 
 // Model Routing Management
+let cachedProviders = [];
+
 async function fetchRouting() {
     const container = document.getElementById("routing-mappings-list");
     container.innerHTML = skeletonRoutingRows(3);
     try {
-        const res = await fetch("/api/routing");
-        const mappings = await res.json();
+        // Fetch both routing mappings and providers in parallel
+        const [routingRes, providersRes] = await Promise.all([
+            fetch("/api/routing"),
+            fetch("/api/providers")
+        ]);
+        const mappings = await routingRes.json();
+        cachedProviders = await providersRes.json();
         renderRouting(mappings);
     } catch (err) {
         console.error("Error fetching routing mappings:", err);
@@ -925,15 +932,54 @@ function renderRouting(mappings) {
 
     mappings.forEach(m => {
         const row = document.createElement("tr");
+
+        // Build provider dropdown options
+        let providerOptions = cachedProviders
+            .filter(p => p.api_type !== "embedding" && p.api_type !== "embedding_nvidia_nim")
+            .map(p => `<option value="${p.id}" ${p.id === m.provider_id ? 'selected' : ''}>${p.name} (${p.model_name})</option>`)
+            .join("");
+
         row.innerHTML = `
             <td class="val-cell">${m.model_id}</td>
-            <td class="val-cell">${m.provider_name}</td>
+            <td class="val-cell">
+                <select class="form-control routing-provider-select"
+                        onchange="handleRoutingProviderChange('${m.model_id}', this.value)"
+                        title="Switch provider for this model ID">
+                    ${providerOptions}
+                </select>
+            </td>
             <td class="action-cell">
                 <button class="btn btn-danger btn-sm" onclick="deleteRoutingMapping('${m.model_id}')">Delete</button>
             </td>
         `;
         container.appendChild(row);
     });
+}
+
+async function handleRoutingProviderChange(modelId, newProviderId) {
+    const providerId = parseInt(newProviderId);
+    if (!providerId) return;
+
+    try {
+        const res = await fetch("/api/routing", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model_id: modelId, provider_id: providerId })
+        });
+        if (res.ok) {
+            // Show brief visual feedback
+            const selects = document.querySelectorAll(".routing-provider-select");
+            selects.forEach(sel => {
+                if (sel.closest("tr")?.querySelector(".val-cell")?.textContent === modelId) {
+                    sel.style.borderColor = "var(--accent)";
+                    setTimeout(() => { sel.style.borderColor = ""; }, 800);
+                }
+            });
+        }
+    } catch (err) {
+        console.error("Failed to update routing:", err);
+        fetchRouting(); // Revert on error
+    }
 }
 
 function openRoutingModal() {
