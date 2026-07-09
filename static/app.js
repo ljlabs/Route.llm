@@ -935,8 +935,11 @@ function renderRouting(mappings) {
 
         // Build provider dropdown options
         let providerOptions = cachedProviders
-            .filter(p => p.api_type !== "embedding" && p.api_type !== "embedding_nvidia_nim")
-            .map(p => `<option value="${p.id}" ${p.id === m.provider_id ? 'selected' : ''}>${p.name} (${p.model_name})</option>`)
+            .map(p => {
+                const isEmbedding = p.api_type.includes("embedding");
+                const tag = isEmbedding ? ' [Embedding]' : '';
+                return `<option value="${p.id}" ${p.id === m.provider_id ? 'selected' : ''}>${p.name} (${p.model_name})${tag}</option>`;
+            })
             .join("");
 
         row.innerHTML = `
@@ -994,7 +997,8 @@ function openRoutingModal() {
             providers.forEach(p => {
                 const opt = document.createElement("option");
                 opt.value = p.id;
-                opt.innerText = p.name;
+                const isEmbedding = p.api_type.includes("embedding");
+                opt.innerText = `${p.name} (${p.model_name})${isEmbedding ? ' [Embedding]' : ''}`;
                 providerSelect.appendChild(opt);
             });
         });
