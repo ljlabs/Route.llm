@@ -48,7 +48,10 @@ app.add_middleware(
 async def startup_event():
     # Initialize database
     db.init_db()
-    
+
+    # Enforce log limit on startup to clean up any accumulated logs
+    db.enforce_log_limit()
+
     # Initialize infrastructure
     http_client = init_http_client()
     
