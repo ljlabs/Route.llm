@@ -1042,16 +1042,23 @@ def test_anthropic_tool_result_with_image():
 
     openai_req = anthropic_to_openai_request(anth_req, "gpt-4o")
 
+    # Tool result message should contain acknowledgment text
     tool_msg = openai_req["messages"][1]
     assert tool_msg["role"] == "tool"
     assert tool_msg["tool_call_id"] == "toolu_read_123"
-    # Content should preserve text and image blocks
-    assert isinstance(tool_msg["content"], list)
-    assert len(tool_msg["content"]) == 2
-    assert tool_msg["content"][0]["type"] == "text"
-    assert tool_msg["content"][0]["text"] == "File contents:"
-    assert tool_msg["content"][1]["type"] == "image_url"
-    assert "data:image/jpeg;base64," in tool_msg["content"][1]["image_url"]["url"]
+    # Content should be a JSON string acknowledging image was loaded
+    assert isinstance(tool_msg["content"], str)
+    assert "Image loaded into context" in tool_msg["content"]
+
+    # Image should be in a separate user message (needed for Gemini compatibility)
+    user_image_msg = openai_req["messages"][2]
+    assert user_image_msg["role"] == "user"
+    assert isinstance(user_image_msg["content"], list)
+    assert len(user_image_msg["content"]) == 2
+    assert user_image_msg["content"][0]["type"] == "text"
+    assert user_image_msg["content"][0]["text"] == "File contents:"
+    assert user_image_msg["content"][1]["type"] == "image_url"
+    assert "data:image/jpeg;base64," in user_image_msg["content"][1]["image_url"]["url"]
 
 
 

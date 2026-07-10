@@ -189,15 +189,22 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
                         tool_use_id = tool_use_id.split(SIGNATURE_SEPARATOR)[0]
 
                     if image_parts:
-                        # Preserve tool result with mixed text and images as a list
-                        tool_result_list = []
-                        if text_parts:
-                            tool_result_list.append({"type": "text", "text": "".join(text_parts)})
-                        tool_result_list.extend(image_parts)
+                        # Acknowledge the tool ran with a simple text confirmation
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_use_id,
-                            "content": tool_result_list
+                            "content": json.dumps({"status": "success", "message": "Image loaded into context."})
+                        })
+                        # Append the image(s) as a separate user message
+                        user_image_content = []
+                        if text_parts:
+                            user_image_content.append({"type": "text", "text": "".join(text_parts)})
+                        else:
+                            user_image_content.append({"type": "text", "text": "Here is the image you requested from the file path:"})
+                        user_image_content.extend(image_parts)
+                        messages.append({
+                            "role": "user",
+                            "content": user_image_content
                         })
                     else:
                         # No images — plain text tool result, standard tool role message
