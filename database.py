@@ -338,23 +338,32 @@ def start_request_log(provider_name, request_method, request_path, request_body)
     conn = get_db_connection()
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
-    # Insert with sentinel values — will be updated when the response is complete
-    cursor.execute("""
-        INSERT INTO logs (timestamp, provider_name, request_method, request_path,
-                          request_body, response_status, response_body,
-                          tokens_sent, tokens_received, latency_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0)
-    """, (timestamp, provider_name, request_method, request_path, request_body, 0, ""))
-    request_id = cursor.lastrowid
-    _log.info(f"[lifecycle] start_request_log: created log id={request_id} for {request_method} {request_path}")
-    # Stage 1: router received
-    cursor.execute("""
-        INSERT INTO log_events (request_id, stage, timestamp, body, status_code)
-        VALUES (?, 'router_received', ?, ?, NULL)
-    """, (request_id, timestamp, request_body))
-    _log.info(f"[lifecycle] start_request_log: inserted 'router_received' event for request_id={request_id}")
-    conn.commit()
-    conn.close()
+    request_id = None
+    try:
+        # Insert with sentinel values — will be updated when the response is complete
+        cursor.execute("""
+            INSERT INTO logs (timestamp, provider_name, request_method, request_path,
+                              request_body, response_status, response_body,
+                              tokens_sent, tokens_received, latency_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0)
+        """, (timestamp, provider_name, request_method, request_path, request_body, 0, ""))
+        request_id = cursor.lastrowid
+        _log.info(f"[lifecycle] start_request_log: created log id={request_id} for {request_method} {request_path}")
+        # Stage 1: router received
+        cursor.execute("""
+            INSERT INTO log_events (request_id, stage, timestamp, body, status_code)
+            VALUES (?, 'router_received', ?, ?, NULL)
+        """, (request_id, timestamp, request_body))
+        _log.info(f"[lifecycle] start_request_log: inserted 'router_received' event for request_id={request_id}")
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            _log.warning(f"[lifecycle] start_request_log: database locked, skipping logging")
+            request_id = None
+        else:
+            raise
+    finally:
+        conn.close()
     return request_id
 
 
@@ -373,13 +382,22 @@ def add_log_event(request_id, stage, body=None, status_code=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
-    cursor.execute("""
-        INSERT INTO log_events (request_id, stage, timestamp, body, status_code)
-        VALUES (?, ?, ?, ?, ?)
-    """, (request_id, stage, timestamp, body, status_code))
-    _log.info(f"[lifecycle] add_log_event: request_id={request_id} stage='{stage}' status_code={status_code}")
-    conn.commit()
-    conn.close()
+    try:
+        cursor.execute("""
+            INSERT INTO log_events (request_id, stage, timestamp, body, status_code)
+            VALUES (?, ?, ?, ?, ?)
+        """, (request_id, stage, timestamp, body, status_code))
+        _log.info(f"[lifecycle] add_log_event: request_id={request_id} stage='{stage}' status_code={status_code}")
+        conn.commit()
+    except sqlite3.IntegrityError:
+        _log.warning(f"[lifecycle] add_log_event: parent log row {request_id} was deleted (race condition), skipping stage={stage}")
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            _log.warning(f"[lifecycle] add_log_event: database locked, skipping stage={stage}")
+        else:
+            raise
+    finally:
+        conn.close()
 
 
 def complete_request_log(request_id, response_status, response_body,
@@ -397,21 +415,29 @@ def complete_request_log(request_id, response_status, response_body,
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE logs
-        SET response_status = ?, response_body = ?,
-            tokens_sent = ?, tokens_received = ?, latency_ms = ?
-        WHERE id = ?
-    """, (response_status, response_body, tokens_sent, tokens_received, latency_ms, request_id))
-    _log.info(f"[lifecycle] complete_request_log: updated log id={request_id} status={response_status}")
-    timestamp = datetime.now().isoformat()
-    cursor.execute("""
-        INSERT INTO log_events (request_id, stage, timestamp, body, status_code)
-        VALUES (?, 'client_response', ?, ?, ?)
-    """, (request_id, timestamp, response_body, response_status))
-    _log.info(f"[lifecycle] complete_request_log: inserted 'client_response' event for request_id={request_id}")
-    conn.commit()
-    conn.close()
+    try:
+        cursor.execute("""
+            UPDATE logs
+            SET response_status = ?, response_body = ?,
+                tokens_sent = ?, tokens_received = ?, latency_ms = ?
+            WHERE id = ?
+        """, (response_status, response_body, tokens_sent, tokens_received, latency_ms, request_id))
+        _log.info(f"[lifecycle] complete_request_log: updated log id={request_id} status={response_status}")
+        timestamp = datetime.now().isoformat()
+        cursor.execute("""
+            INSERT INTO log_events (request_id, stage, timestamp, body, status_code)
+            VALUES (?, 'client_response', ?, ?, ?)
+        """, (request_id, timestamp, response_body, response_status))
+        _log.info(f"[lifecycle] complete_request_log: inserted 'client_response' event for request_id={request_id}")
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            _log.warning(f"[lifecycle] complete_request_log: database locked, skipping finalization for id={request_id}")
+        else:
+            raise
+    finally:
+        conn.close()
+    # Enforce limit at end of request — after all logging is done
     enforce_log_limit()
 
 
@@ -423,12 +449,21 @@ def add_log(provider_name, request_method, request_path, request_body, response_
     conn = get_db_connection()
     cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
-    cursor.execute("""
-        INSERT INTO logs (timestamp, provider_name, request_method, request_path, request_body, response_status, response_body, tokens_sent, tokens_received, latency_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (timestamp, provider_name, request_method, request_path, request_body, response_status, response_body, tokens_sent, tokens_received, latency_ms))
-    conn.commit()
-    conn.close()
+    try:
+        cursor.execute("""
+            INSERT INTO logs (timestamp, provider_name, request_method, request_path, request_body, response_status, response_body, tokens_sent, tokens_received, latency_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (timestamp, provider_name, request_method, request_path, request_body, response_status, response_body, tokens_sent, tokens_received, latency_ms))
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            import logging
+            _log = logging.getLogger("database.lifecycle")
+            _log.warning(f"[lifecycle] add_log: database locked, skipping log entry")
+        else:
+            raise
+    finally:
+        conn.close()
 
     enforce_log_limit()
 
@@ -438,22 +473,30 @@ def enforce_log_limit():
         # Delete all logs if disabled (events cascade via FK)
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM logs")
-        conn.commit()
-        conn.close()
+        try:
+            cursor.execute("DELETE FROM logs")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Database locked, skip this enforcement cycle
+        finally:
+            conn.close()
         return
-        
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Get current log count
-    cursor.execute("SELECT COUNT(*) as count FROM logs")
-    count = cursor.fetchone()['count']
-    if count > limit:
-        to_delete = count - limit
-        # Delete oldest logs; events will be removed via ON DELETE CASCADE
-        cursor.execute(f"DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY timestamp ASC LIMIT {to_delete})")
-        conn.commit()
-    conn.close()
+    try:
+        # Get current log count
+        cursor.execute("SELECT COUNT(*) as count FROM logs")
+        count = cursor.fetchone()['count']
+        if count > limit:
+            to_delete = count - limit
+            # Delete oldest logs; events will be removed via ON DELETE CASCADE
+            cursor.execute(f"DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY timestamp ASC LIMIT {to_delete})")
+            conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Database locked, skip this enforcement cycle
+    finally:
+        conn.close()
 
 def get_logs():
     conn = get_db_connection()
@@ -510,9 +553,13 @@ def clear_logs():
     """Clear all logs from the database."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM logs")
-    conn.commit()
-    conn.close()
+    try:
+        cursor.execute("DELETE FROM logs")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Database locked
+    finally:
+        conn.close()
 
 def get_metrics_summary():
     """Get aggregated metrics per provider."""
