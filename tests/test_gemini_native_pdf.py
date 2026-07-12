@@ -6,7 +6,9 @@ to Gemini's native generateContent format with inline_data.
 """
 
 import json
+import os
 import pytest
+import httpx
 from core.providers.gemini import GeminiProvider
 from core.providers.translation import openai_to_anthropic_request
 
@@ -622,3 +624,154 @@ class TestNativePdfResponseTranslation:
         assert len(result["content"]) == 2
         assert result["content"][0]["text"] == "Part 1. "
         assert result["content"][1]["text"] == "Part 2."
+
+
+class TestNativePdfResponseFormatForOpenAiTarget:
+    """Test that the native PDF path produces OpenAI-format output when is_openai_target=True."""
+
+    @pytest.mark.anyio
+    async def test_native_pdf_returns_openai_choices(self, tmp_path, respx_mock):
+        """When a PDF request hits the native generateContent path via /v1/chat/completions,
+        the response must contain OpenAI 'choices' format, not Gemini 'candidates' format."""
+        import database as db
+        from core.router import RouterService
+        from core.rate_limiter import RateLimiter
+
+        db_file = os.path.join(tmp_path, "test_native_pdf_openai.db")
+        db.DB_PATH = db_file
+        db.init_db()
+        db.clear_logs()
+
+        # Add a Gemini provider with native PDF support
+        db.add_provider(
+            "Gemini PDF", "gemini",
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            "test-key", "gemma-4-31b-it", is_active=1,
+        )
+
+        # Mock the generateContent endpoint (what the native PDF path hits)
+        gemini_native_url = "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent"
+        respx_mock.post(gemini_native_url).mock(return_value=httpx.Response(
+            200,
+            json={
+                "candidates": [{
+                    "content": {
+                        "parts": [{"text": '{"title": "Chocolate Cake"}'}],
+                    },
+                    "finishReason": "STOP",
+                }],
+                "usageMetadata": {
+                    "promptTokenCount": 100,
+                    "candidatesTokenCount": 15,
+                },
+            },
+        ))
+
+        async with httpx.AsyncClient() as client:
+            router = RouterService(http_client=client, rate_limiter=RateLimiter(100))
+            router.provider_service.reload_active_provider()
+
+            openai_request = {
+                "model": "gemma-4-31b-it",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Parse this recipe"},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "data:application/pdf;base64,JVBERi0xLjQK",
+                                },
+                            },
+                        ],
+                    }
+                ],
+                "max_tokens": 8192,
+                "temperature": 0.3,
+                "stream": False,
+            }
+
+            response = await router.route_openai_request(openai_request, stream=False)
+
+        body = response.body
+        assert isinstance(body, bytes)
+        data = json.loads(body)
+
+        # Must be OpenAI format, not Gemini format
+        assert "choices" in data, f"Expected OpenAI 'choices' key, got keys: {list(data.keys())}"
+        assert "candidates" not in data, "Response should not contain raw Gemini 'candidates'"
+        assert data["object"] == "chat.completion"
+
+        choice = data["choices"][0]
+        assert choice["message"]["content"] == '{"title": "Chocolate Cake"}'
+        assert choice["finish_reason"] == "stop"
+
+        # Verify usage is in OpenAI format
+        assert "prompt_tokens" in data["usage"]
+        assert "completion_tokens" in data["usage"]
+        assert data["usage"]["prompt_tokens"] == 100
+        assert data["usage"]["completion_tokens"] == 15
+
+    @pytest.mark.anyio
+    async def test_native_pdf_log_stores_openai_format(self, tmp_path, respx_mock):
+        """The database log entry for 'Response to Client' must store OpenAI format,
+        not raw Gemini candidates — verifying the log bug fix at router.py:444."""
+        import database as db
+        from core.router import RouterService
+        from core.rate_limiter import RateLimiter
+
+        db_file = os.path.join(tmp_path, "test_native_pdf_log.db")
+        db.DB_PATH = db_file
+        db.init_db()
+        db.clear_logs()
+
+        db.add_provider(
+            "Gemini PDF", "gemini",
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            "test-key", "gemma-4-31b-it", is_active=1,
+        )
+
+        gemini_native_url = "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent"
+        respx_mock.post(gemini_native_url).mock(return_value=httpx.Response(
+            200,
+            json={
+                "candidates": [{
+                    "content": {"parts": [{"text": "Done"}]},
+                    "finishReason": "STOP",
+                }],
+                "usageMetadata": {"promptTokenCount": 50, "candidatesTokenCount": 5},
+            },
+        ))
+
+        async with httpx.AsyncClient() as client:
+            router = RouterService(http_client=client, rate_limiter=RateLimiter(100))
+            router.provider_service.reload_active_provider()
+
+            openai_request = {
+                "model": "gemma-4-31b-it",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Read this"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "data:application/pdf;base64,JVBERi0xLjQK"},
+                            },
+                        ],
+                    }
+                ],
+                "max_tokens": 1024,
+                "stream": False,
+            }
+
+            await router.route_openai_request(openai_request, stream=False)
+
+        # Verify the stored log has OpenAI format, not raw Gemini
+        logs = db.get_logs()
+        assert len(logs) >= 1
+        log = logs[-1]
+        log_response = json.loads(log["response_body"])
+        assert "choices" in log_response, f"Log should store OpenAI format, got keys: {list(log_response.keys())}"
+        assert "candidates" not in log_response

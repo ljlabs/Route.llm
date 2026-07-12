@@ -356,7 +356,7 @@ class RouterService:
         else:
             final_response = anthropic_response
 
-        final_response_str = json.dumps(response_json, indent=2)
+        final_response_str = json.dumps(final_response, indent=2)
 
         # Stage 4 — finalise the log row (also records client_response event)
         db.complete_request_log(
@@ -441,7 +441,7 @@ class RouterService:
         else:
             final_response = anthropic_response
 
-        final_response_str = json.dumps(gemini_response, indent=2)
+        final_response_str = json.dumps(final_response, indent=2)
 
         # Stage 4 — finalise log
         db.complete_request_log(

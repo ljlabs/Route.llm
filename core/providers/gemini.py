@@ -36,7 +36,7 @@ class GeminiProvider(OpenAIProvider):
         return sanitize_openai_payload(request, is_gemini=True)
 
     def detect_pdf_content(self, anthropic_request: Dict[str, Any]) -> bool:
-        """Check if an Anthropic-format request contains PDF content."""
+        """Check if a request contains PDF content (supports both Anthropic and OpenAI formats)."""
         for msg in anthropic_request.get("messages", []):
             content = msg.get("content")
             if isinstance(content, list):
@@ -46,14 +46,23 @@ class GeminiProvider(OpenAIProvider):
                             media_type = part.get("source", {}).get("media_type", "")
                             if media_type == "application/pdf":
                                 return True
+                        elif part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url.startswith("data:application/pdf"):
+                                return True
                         elif part.get("type") == "tool_result":
                             tool_content = part.get("content")
                             if isinstance(tool_content, list):
                                 for sub in tool_content:
-                                    if isinstance(sub, dict) and sub.get("type") == "image":
-                                        media_type = sub.get("source", {}).get("media_type", "")
-                                        if media_type == "application/pdf":
-                                            return True
+                                    if isinstance(sub, dict):
+                                        if sub.get("type") == "image":
+                                            media_type = sub.get("source", {}).get("media_type", "")
+                                            if media_type == "application/pdf":
+                                                return True
+                                        elif sub.get("type") == "image_url":
+                                            url = sub.get("image_url", {}).get("url", "")
+                                            if url.startswith("data:application/pdf"):
+                                                return True
         return False
 
     def build_native_pdf_endpoint(self) -> str:
@@ -106,6 +115,17 @@ class GeminiProvider(OpenAIProvider):
                                 "data": source.get("data", "")
                             }
                         })
+                    elif part_type == "image_url":
+                        url = part.get("image_url", {}).get("url", "")
+                        if url.startswith("data:"):
+                            header, _, data = url.partition(",")
+                            mime_type = header.split(":", 1)[1].split(";")[0] if ":" in header else "image/png"
+                            parts.append({
+                                "inline_data": {
+                                    "mime_type": mime_type,
+                                    "data": data
+                                }
+                            })
                     elif part_type == "tool_result":
                         tool_content = part.get("content")
                         if isinstance(tool_content, list):
@@ -121,6 +141,17 @@ class GeminiProvider(OpenAIProvider):
                                                 "data": source.get("data", "")
                                             }
                                         })
+                                    elif sub.get("type") == "image_url":
+                                        url = sub.get("image_url", {}).get("url", "")
+                                        if url.startswith("data:"):
+                                            header, _, data = url.partition(",")
+                                            mime_type = header.split(":", 1)[1].split(";")[0] if ":" in header else "image/png"
+                                            parts.append({
+                                                "inline_data": {
+                                                    "mime_type": mime_type,
+                                                    "data": data
+                                                }
+                                            })
                         elif isinstance(tool_content, str):
                             parts.append({"text": tool_content})
 

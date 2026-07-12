@@ -144,6 +144,9 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
                     text_content += part.get("text", "")
                 elif part_type == "image":
                     image_blocks.append(_anthropic_image_to_openai(part))
+                elif part_type == "image_url":
+                    # Already in OpenAI format — pass through as-is
+                    image_blocks.append(part)
                 elif part_type == "tool_use":
                     tool_id = part.get("id")
                     signature = None

@@ -13,12 +13,12 @@ pip install -r requirements.txt
 :start
 echo(
 echo Server is launching. To access the portal, go to:
-echo http://0.0.0.0:8000
+echo http://0.0.0.0:8001
 echo(
 echo Press Ctrl+C in this window to stop the server.
 echo(
 
-.venv\Scripts\python -m uvicorn main:app --host 0.0.0.0 --port 8000
+.venv\Scripts\python -m uvicorn main:app --host 0.0.0.0 --port 8001
 
 echo(
 echo Server stopped.
