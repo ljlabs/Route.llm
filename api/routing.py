@@ -5,7 +5,7 @@ Endpoints for managing the mapping between Model IDs and Providers.
 """
 
 from typing import List, Dict, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 import database as db
 import logging
 
@@ -22,6 +22,33 @@ async def get_mappings():
     except Exception as e:
         logger.error(f"Failed to get mappings: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve routing mappings")
+
+
+@router.get("/models")
+async def list_models():
+    """
+    Get all available model IDs.
+    Returns model IDs from model_mappings plus the active provider's model.
+    """
+    try:
+        mappings = db.get_model_mappings()
+        model_ids = [m["model_id"] for m in mappings]
+
+        # Add active provider's model if not already in mappings
+        active_prov = db.get_active_provider()
+        if active_prov and active_prov["model_name"] not in model_ids:
+            model_ids.append(active_prov["model_name"])
+
+        return {"object": "list", "data": [{"id": m, "object": "model"} for m in model_ids]}
+    except Exception as e:
+        logger.error(f"Failed to list models: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve models")
+
+
+@router.delete("/models", status_code=status.HTTP_405_METHOD_NOT_ALLOWED)
+async def delete_models_not_allowed():
+    """DELETE /api/routing/models is not allowed."""
+    raise HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED, detail="Method not allowed")
 
 
 @router.post("")

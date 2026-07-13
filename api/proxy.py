@@ -5,14 +5,47 @@ Anthropic and OpenAI compatible endpoints that route to configured providers.
 """
 
 from typing import Any, Dict, Union
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, status
 from core.router import get_router_service
 from models.request import AnthropicRequest, OpenAIRequest
 import logging
+import database as db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["proxy"])
+
+
+@router.get("/v1/models")
+async def list_models():
+    """
+    OpenAI-compatible models list endpoint.
+    Returns available models from the active provider and model mappings.
+    """
+    try:
+        # Get model mappings
+        mappings = db.get_model_mappings()
+        model_ids = [m["model_id"] for m in mappings]
+
+        # Add active provider's model if not already in mappings
+        active_prov = db.get_active_provider()
+        if active_prov and active_prov["model_name"] not in model_ids:
+            model_ids.append(active_prov["model_name"])
+
+        # Return OpenAI-compatible format
+        models_data = [{"id": m, "object": "model", "created": 0, "owned_by": "router"} for m in model_ids]
+        return {"object": "list", "data": models_data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/v1/models", status_code=status.HTTP_405_METHOD_NOT_ALLOWED)
+async def delete_models_not_allowed():
+    """DELETE /v1/models is not allowed."""
+    raise HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED, detail="Method not allowed")
 
 
 @router.post("/v1/messages")
