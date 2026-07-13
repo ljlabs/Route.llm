@@ -11,7 +11,9 @@ from pydantic import BaseModel, Field, model_validator
 class Message(BaseModel):
     """Chat message."""
     role: str = Field(..., description="Message role: system, user, assistant")
-    content: Union[str, List[Any]] = Field(..., description="Message content")
+    content: Optional[Union[str, List[Any]]] = Field(default=None, description="Message content")
+    tool_calls: Optional[List[Any]] = Field(default=None, description="Tool calls made by assistant")
+    tool_call_id: Optional[str] = Field(default=None, description="Tool call ID for tool response messages")
 
 
 class FlexibleTool(BaseModel):

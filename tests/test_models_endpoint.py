@@ -218,6 +218,56 @@ class TestModelsEndpointValidation:
         assert response.status_code == 404
 
 
+class TestModelsEndpointNoPrefix:
+    """Tests for endpoints without /v1/ prefix (e.g., /models, /chat/completions)."""
+
+    def test_list_models_no_prefix(self):
+        """GET /models works same as /v1/models."""
+        client = TestClient(app)
+        db.add_provider("TestProvider", "openai", "http://test.com", "sk-test", "gpt-4o", is_active=1)
+
+        response = client.get("/models")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["object"] == "list"
+        assert len(data["data"]) == 1
+        assert data["data"][0]["id"] == "gpt-4o"
+
+    def test_list_models_no_prefix_with_mappings(self):
+        """GET /models returns mapped models plus active provider model."""
+        client = TestClient(app)
+        db.add_provider("Provider1", "openai", "http://test1.com", "key1", "model1", is_active=0)
+        db.add_provider("Provider2", "openai", "http://test2.com", "key2", "model2", is_active=1)
+        providers = db.get_providers()
+        p1_id = providers[0]["id"]
+        p2_id = providers[1]["id"]
+
+        db.add_model_mapping("mapped-model-1", p1_id)
+        db.add_model_mapping("mapped-model-2", p2_id)
+
+        response = client.get("/models")
+        assert response.status_code == 200
+        data = response.json()
+        model_ids = [m["id"] for m in data["data"]]
+        assert "mapped-model-1" in model_ids
+        assert "mapped-model-2" in model_ids
+        assert "model2" in model_ids
+
+    def test_chat_completions_no_prefix(self):
+        """POST /chat/completions works same as /v1/chat/completions."""
+        client = TestClient(app)
+        db.add_provider("TestProvider", "openai", "http://test.com", "sk-test", "gpt-4o", is_active=1)
+
+        # This should return 500 since no real backend, but not 404/422
+        response = client.post("/chat/completions", json={
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hello"}]
+        })
+        # Should not be 404 or 422 (validation errors)
+        assert response.status_code != 404
+        assert response.status_code != 422
+
+
 class TestModelsEndpointWithDatabaseErrors:
     """Tests for handling database errors gracefully."""
 

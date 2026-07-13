@@ -41,6 +41,13 @@ async def list_models():
         logger.error(f"Error listing models: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/models")
+async def list_models_no_prefix():
+    """
+    OpenAI-compatible models list endpoint (no /v1/ prefix).
+    Some clients like Android Studio call /models instead of /v1/models.
+    """
+    return await list_models()
 
 @router.delete("/v1/models", status_code=status.HTTP_405_METHOD_NOT_ALLOWED)
 async def delete_models_not_allowed():
@@ -79,12 +86,32 @@ async def proxy_openai_completions(request: OpenAIRequest):
         # Pydantic model converts to dict for the router service
         req_body = request.model_dump(exclude_none=True)
         stream = request.stream
-        
+
         router_service = get_router_service()
         return await router_service.route_openai_request(req_body, stream=stream)
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error in OpenAI proxy: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/chat/completions")
+async def proxy_openai_completions_no_prefix(request: Request):
+    """
+    OpenAI-compatible chat completions endpoint (no /v1/ prefix).
+    Some clients like Android Studio call /chat/completions instead of /v1/chat/completions.
+    """
+    body = await request.json()
+    logger.error(f"Android Studio request body: {body}")
+
+    # Parse with Pydantic model for validation
+    from models.request import OpenAIRequest
+    try:
+        parsed = OpenAIRequest(**body)
+    except Exception as e:
+        logger.error(f"Validation error: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
+
+    return await proxy_openai_completions(parsed)
