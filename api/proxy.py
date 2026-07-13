@@ -104,14 +104,12 @@ async def proxy_openai_completions_no_prefix(request: Request):
     Some clients like Android Studio call /chat/completions instead of /v1/chat/completions.
     """
     body = await request.json()
-    logger.error(f"Android Studio request body: {body}")
 
     # Parse with Pydantic model for validation
     from models.request import OpenAIRequest
     try:
         parsed = OpenAIRequest(**body)
     except Exception as e:
-        logger.error(f"Validation error: {e}")
         raise HTTPException(status_code=422, detail=str(e))
 
     return await proxy_openai_completions(parsed)
