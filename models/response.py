@@ -39,6 +39,8 @@ class ChoiceDelta(BaseModel):
     """Choice delta for streaming."""
     role: Optional[str] = None
     content: Optional[str] = None
+    tool_calls: Optional[List[dict]] = None
+    refusal: Optional[str] = None
 
 
 class Choice(BaseModel):
@@ -47,6 +49,7 @@ class Choice(BaseModel):
     message: Optional[dict] = Field(default=None, description="Complete message")
     delta: Optional[ChoiceDelta] = Field(default=None, description="Streaming delta")
     finish_reason: Optional[str] = Field(default=None, description="Finish reason")
+    logprobs: Optional[dict] = Field(default=None, description="Log probabilities")
 
 
 class UsageInfo(BaseModel):
@@ -64,6 +67,7 @@ class OpenAIResponse(BaseModel):
     model: str = Field(..., description="Model used")
     choices: List[Choice] = Field(..., description="Completion choices")
     usage: UsageInfo = Field(default_factory=UsageInfo, description="Token usage")
+    system_fingerprint: Optional[str] = Field(default=None, description="System fingerprint")
 
 
 class ChatTestResponse(BaseModel):
@@ -76,8 +80,16 @@ class ErrorDetail(BaseModel):
     """Error details."""
     type: str = Field(..., description="Error type")
     message: str = Field(..., description="Error message")
+    param: Optional[str] = Field(default=None, description="Parameter that caused the error")
+    code: Optional[str] = Field(default=None, description="Error code")
 
 
 class ErrorResponse(BaseModel):
     """Standard error response."""
+    error: ErrorDetail
+
+
+class AnthropicErrorResponse(BaseModel):
+    """Anthropic-compatible error response."""
+    type: str = Field(default="error", description="Error type")
     error: ErrorDetail

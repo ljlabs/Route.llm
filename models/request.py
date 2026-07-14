@@ -10,10 +10,11 @@ from pydantic import BaseModel, Field, model_validator
 
 class Message(BaseModel):
     """Chat message."""
-    role: str = Field(..., description="Message role: system, user, assistant")
+    role: str = Field(..., description="Message role: system, user, assistant, tool")
     content: Optional[Union[str, List[Any]]] = Field(default=None, description="Message content")
     tool_calls: Optional[List[Any]] = Field(default=None, description="Tool calls made by assistant")
     tool_call_id: Optional[str] = Field(default=None, description="Tool call ID for tool response messages")
+    name: Optional[str] = Field(default=None, description="Name for function calling (legacy)")
 
 
 class FlexibleTool(BaseModel):
@@ -25,7 +26,7 @@ class FlexibleTool(BaseModel):
     name: Optional[str] = Field(default=None, description="Tool name")
     description: Optional[str] = Field(default="", description="Tool description")
     input_schema: Optional[dict] = Field(default=None, description="JSON schema for tool input")
-    
+
     @model_validator(mode='after')
     def normalize_openai_format(self):
         """Normalize OpenAI format to Anthropic-compatible format."""
@@ -48,6 +49,12 @@ class AnthropicRequest(BaseModel):
     temperature: Optional[float] = Field(default=None, description="Sampling temperature")
     top_p: Optional[float] = Field(default=None, description="Nucleus sampling parameter")
     stream: bool = Field(default=False, description="Enable streaming")
+    # Additional Anthropic parameters for full compatibility
+    top_k: Optional[int] = Field(default=None, ge=1, le=500, description="Top-k sampling")
+    meta: Optional[dict] = Field(default=None, description="User metadata")
+    stop_sequences: Optional[List[str]] = Field(default=None, description="Custom stop sequences")
+    tool_choice: Optional[dict] = Field(default=None, description="Tool selection control")
+    thinking: Optional[dict] = Field(default=None, description="Extended thinking config")
 
 
 class OpenAIRequest(BaseModel):
@@ -59,6 +66,17 @@ class OpenAIRequest(BaseModel):
     temperature: Optional[float] = Field(default=None, description="Sampling temperature")
     top_p: Optional[float] = Field(default=None, description="Nucleus sampling parameter")
     stream: bool = Field(default=False, description="Enable streaming")
+    # Additional OpenAI parameters for full compatibility
+    n: Optional[int] = Field(default=1, ge=1, le=10, description="Number of completions to generate")
+    stop: Optional[Union[str, List[str]]] = Field(default=None, description="Stop sequences")
+    presence_penalty: Optional[float] = Field(default=0, ge=-2, le=2, description="Presence penalty")
+    frequency_penalty: Optional[float] = Field(default=0, ge=-2, le=2, description="Frequency penalty")
+    logit_bias: Optional[dict] = Field(default=None, description="Token bias map")
+    user: Optional[str] = Field(default=None, description="End-user identifier")
+    seed: Optional[int] = Field(default=None, description="System fingerprint seed")
+    tool_choice: Optional[Union[str, dict]] = Field(default=None, description="Tool selection control")
+    response_format: Optional[dict] = Field(default=None, description="Response format (JSON mode)")
+    functions: Optional[List[dict]] = Field(default=None, description="Legacy function calling")
 
 
 class EmbeddingRequest(BaseModel):

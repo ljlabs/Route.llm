@@ -275,7 +275,18 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
         openai_req["top_p"] = anth_req["top_p"]
     if "stream" in anth_req:
         openai_req["stream"] = anth_req["stream"]
-        
+    # Additional parameters for full compatibility
+    if "top_k" in anth_req:
+        openai_req["top_k"] = anth_req["top_k"]
+    if "meta" in anth_req:
+        openai_req["meta"] = anth_req["meta"]
+    if "stop_sequences" in anth_req:
+        openai_req["stop"] = anth_req["stop_sequences"]
+    if "tool_choice" in anth_req:
+        openai_req["tool_choice"] = anth_req["tool_choice"]
+    if "thinking" in anth_req:
+        openai_req["thinking"] = anth_req["thinking"]
+
     return openai_req
 
 
@@ -398,14 +409,35 @@ def openai_to_anthropic_request(openai_req: dict, target_model: str) -> dict:
         anth_req["max_tokens"] = openai_req["max_tokens"]
     else:
         anth_req["max_tokens"] = 4096
-        
+
     if "temperature" in openai_req:
         anth_req["temperature"] = openai_req["temperature"]
     if "top_p" in openai_req:
         anth_req["top_p"] = openai_req["top_p"]
     if "stream" in openai_req:
         anth_req["stream"] = openai_req["stream"]
-        
+    # Additional OpenAI parameters for full compatibility
+    if "n" in openai_req:
+        anth_req["n"] = openai_req["n"]
+    if "stop" in openai_req:
+        anth_req["stop_sequences"] = openai_req["stop"] if isinstance(openai_req["stop"], list) else [openai_req["stop"]]
+    if "presence_penalty" in openai_req:
+        anth_req["presence_penalty"] = openai_req["presence_penalty"]
+    if "frequency_penalty" in openai_req:
+        anth_req["frequency_penalty"] = openai_req["frequency_penalty"]
+    if "logit_bias" in openai_req:
+        anth_req["logit_bias"] = openai_req["logit_bias"]
+    if "user" in openai_req:
+        anth_req["user"] = openai_req["user"]
+    if "seed" in openai_req:
+        anth_req["seed"] = openai_req["seed"]
+    if "tool_choice" in openai_req:
+        anth_req["tool_choice"] = openai_req["tool_choice"]
+    if "response_format" in openai_req:
+        anth_req["response_format"] = openai_req["response_format"]
+    if "functions" in openai_req:
+        anth_req["functions"] = openai_req["functions"]
+
     return anth_req
 
 
@@ -463,7 +495,7 @@ def openai_to_anthropic_response(openai_res: dict) -> dict:
         "model": openai_res.get("model", ""),
         "content": content_blocks,
         "stop_reason": stop_reason,
-        "stop_sequence": None,
+        "stop_sequence": openai_res.get("stop_sequence"),  # Pass through if available
         "usage": {
             "input_tokens": (openai_res.get("usage") or {}).get("prompt_tokens", 0),
             "output_tokens": (openai_res.get("usage") or {}).get("completion_tokens", 0)
@@ -501,7 +533,7 @@ def anthropic_to_openai_response(anth_res: dict) -> dict:
         stop_reason = "length"
     elif anth_stop == "tool_use":
         stop_reason = "tool_calls"
-        
+
     openai_choice = {
         "index": 0,
         "message": {
@@ -512,8 +544,9 @@ def anthropic_to_openai_response(anth_res: dict) -> dict:
     }
     if tool_calls:
         openai_choice["message"]["tool_calls"] = tool_calls
-        
-    return {
+
+    # Build response with all available fields
+    response = {
         "id": anth_res.get("id", f"chatcmpl-{uuid.uuid4().hex}"),
         "object": "chat.completion",
         "created": int(time.time()),
@@ -525,3 +558,9 @@ def anthropic_to_openai_response(anth_res: dict) -> dict:
             "total_tokens": anth_res.get("usage", {}).get("input_tokens", 0) + anth_res.get("usage", {}).get("output_tokens", 0)
         }
     }
+
+    # Add system_fingerprint if available
+    if "system_fingerprint" in anth_res:
+        response["system_fingerprint"] = anth_res["system_fingerprint"]
+
+    return response

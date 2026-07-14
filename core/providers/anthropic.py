@@ -41,18 +41,13 @@ class AnthropicProvider(BaseProvider):
         return provider_response
     
 
-    def get_headers(self) -> Dict[str, str]:
+    def get_headers(self, anthropic_version: str = "2023-06-01") -> Dict[str, str]:
 
         """Get Anthropic-specific headers."""
-
         return {
-
             "x-api-key": self.api_key,
-
-            "anthropic-version": "2023-06-01",
-
+            "anthropic-version": anthropic_version,
             "Content-Type": "application/json"
-
         }
     
 

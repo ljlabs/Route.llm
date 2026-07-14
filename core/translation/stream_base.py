@@ -27,6 +27,157 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _without_null_values(value: Any) -> Any:
+    """Recursively remove null values before emitting an SSE JSON payload."""
+    if isinstance(value, dict):
+        return {
+            key: _without_null_values(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [_without_null_values(item) for item in value if item is not None]
+    return value
+
+
+def _sanitize_sse_chunk(chunk: str) -> str:
+    """Remove null JSON values from each data line while preserving SSE framing."""
+    sanitized_lines = []
+    for line in chunk.splitlines(keepends=True):
+        line_body = line.rstrip("\r\n")
+        line_ending = line[len(line_body):]
+        if not line_body.startswith("data:"):
+            sanitized_lines.append(line)
+            continue
+
+        data_content = line_body.removeprefix("data:").strip()
+        if not data_content or data_content == "[DONE]":
+            sanitized_lines.append(line)
+            continue
+
+        try:
+            data = json.loads(data_content)
+        except json.JSONDecodeError:
+            sanitized_lines.append(line)
+            continue
+
+        sanitized_data = _without_null_values(data)
+        if sanitized_data is None:
+            sanitized_data = {}
+        compact_json = ": " not in data_content and ", " not in data_content
+        json_kwargs = {"separators": (",", ":")} if compact_json else {}
+        sanitized_lines.append(
+            "data: " + json.dumps(sanitized_data, **json_kwargs) + line_ending
+        )
+    return "".join(sanitized_lines)
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    """Treat an explicitly null or malformed structural value as an empty object."""
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list:
+    """Treat an explicitly null or malformed structural value as an empty array."""
+    return value if isinstance(value, list) else []
+
+
+def _sanitize_stream_translation(translator_class):
+    """Apply outbound null removal to every response produced by a translator."""
+    original_translate_stream = translator_class.translate_stream
+
+    async def translate_stream(self, *args, **kwargs):
+        async for chunk in original_translate_stream(self, *args, **kwargs):
+            yield _sanitize_sse_chunk(chunk)
+
+    translator_class.translate_stream = translate_stream
+    return translator_class
+
+
+async def _iter_openai_sse_lines(response):
+    """Yield provider SSE lines, adapting buffered OpenAI JSON completions when needed."""
+    response_headers = getattr(response, "headers", {})
+    content_type = str(response_headers.get("content-type", "")).lower()
+    if "application/json" not in content_type:
+        async for line in response.aiter_lines():
+            yield line
+        return
+
+    raw_body = response.content if getattr(response, "is_stream_consumed", False) else await response.aread()
+    if isinstance(raw_body, bytes):
+        raw_body = raw_body.decode("utf-8", errors="replace")
+
+    try:
+        completion = _as_dict(json.loads(raw_body))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Upstream returned invalid JSON for a streaming request") from exc
+
+    choices = _as_list(completion.get("choices"))
+    if not choices:
+        raise ValueError("Upstream JSON response has no completion choices")
+
+    choice = _as_dict(choices[0])
+    message = _as_dict(choice.get("message"))
+    choice_index = choice.get("index") or 0
+    base_chunk = {
+        "id": completion.get("id"),
+        "object": "chat.completion.chunk",
+        "created": completion.get("created"),
+        "model": completion.get("model"),
+    }
+
+    yield "data: " + json.dumps({
+        **base_chunk,
+        "choices": [{
+            "index": choice_index,
+            "delta": {"role": message.get("role") or "assistant"},
+            "finish_reason": None,
+        }],
+    })
+
+    content = message.get("content")
+    if isinstance(content, list):
+        content = "".join(
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and part.get("type", "text") == "text"
+        )
+    if content:
+        yield "data: " + json.dumps({
+            **base_chunk,
+            "choices": [{
+                "index": choice_index,
+                "delta": {"content": content},
+                "finish_reason": None,
+            }],
+        })
+
+    tool_calls = []
+    for tool_index, raw_call in enumerate(_as_list(message.get("tool_calls"))):
+        call = _as_dict(raw_call)
+        if call:
+            tool_calls.append({**call, "index": call.get("index") or tool_index})
+    if tool_calls:
+        yield "data: " + json.dumps({
+            **base_chunk,
+            "choices": [{
+                "index": choice_index,
+                "delta": {"tool_calls": tool_calls},
+                "finish_reason": None,
+            }],
+        })
+
+    yield "data: " + json.dumps({
+        **base_chunk,
+        "choices": [{
+            "index": choice_index,
+            "delta": {},
+            "finish_reason": choice.get("finish_reason") or "stop",
+        }],
+    })
+    yield "data: [DONE]"
+
+
 
 
 class StreamTranslator(ABC):
@@ -85,6 +236,7 @@ class StreamTranslator(ABC):
 
 
 
+@_sanitize_stream_translation
 class PassthroughStreamTranslator(StreamTranslator):
 
 
@@ -133,12 +285,21 @@ class PassthroughStreamTranslator(StreamTranslator):
 
 
         chunk_count = 0
+        response_content_type = str(
+            getattr(response, "headers", {}).get("content-type", "")
+        ).lower()
+        upstream_lines = (
+            _iter_openai_sse_lines(response)
+            if "application/json" in response_content_type
+            else response.aiter_lines()
+        )
+        line_suffix = "\n\n" if "application/json" in response_content_type else "\n"
 
 
         try:
 
 
-            async for line in response.aiter_lines():
+            async for line in upstream_lines:
 
 
                 chunk_count += 1
@@ -147,7 +308,7 @@ class PassthroughStreamTranslator(StreamTranslator):
                 stream_logger.debug(f"[LLM → ROUTER] Chunk {chunk_count} from {provider_config.get('name', 'Unknown')}: {line[:200]}...")
 
 
-                yield line + "\n"
+                yield line + line_suffix
                 
 
 
@@ -251,6 +412,7 @@ class PassthroughStreamTranslator(StreamTranslator):
 
 
 
+@_sanitize_stream_translation
 class OpenAIToAnthropicStreamTranslator(StreamTranslator):
 
 
@@ -326,7 +488,7 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
         try:
 
 
-            async for line in response.aiter_lines():
+            async for line in _iter_openai_sse_lines(response):
 
 
                 llm_chunk_count += 1
@@ -357,10 +519,10 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                     try:
 
 
-                        data = json.loads(data_content)
+                        data = _as_dict(json.loads(data_content))
 
 
-                        choices = data.get("choices", [])
+                        choices = _as_list(data.get("choices"))
 
 
                         if not choices:
@@ -369,10 +531,10 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                             continue
 
 
-                        choice = choices[0]
+                        choice = _as_dict(choices[0])
 
 
-                        delta = choice.get("delta", {})
+                        delta = _as_dict(choice.get("delta"))
                         
 
 
@@ -401,7 +563,7 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                                 msg_id = f"msg_local_{os.urandom(8).hex()}"
 
 
-                            model_name = data.get("model", provider_config.get("model_name", ""))
+                            model_name = data.get("model") or provider_config.get("model_name", "")
 
 
                             msg_start_data = {
@@ -547,10 +709,15 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                         # Yield tool calls chunks if present
 
 
-                        tool_calls = delta.get("tool_calls", [])
+                        tool_calls = _as_list(delta.get("tool_calls"))
 
 
-                        for call in tool_calls:
+                        for raw_call in tool_calls:
+
+
+                            call = _as_dict(raw_call)
+                            if not call:
+                                continue
 
 
                             if sent_stop:
@@ -559,7 +726,10 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                                 break
 
 
-                            call_idx = call.get("index", 0)
+                            function = _as_dict(call.get("function"))
+                            extra_content = _as_dict(call.get("extra_content"))
+                            google_content = _as_dict(extra_content.get("google"))
+                            call_idx = call.get("index") or 0
                             
 
 
@@ -572,11 +742,11 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                                 anth_block_id = f"toolu_{os.urandom(8).hex()}"
 
 
-                                tool_name = call.get("function", {}).get("name", "unknown_tool")
+                                tool_name = function.get("name") or "unknown_tool"
                                 
 
 
-                                signature = call.get("extra_content", {}).get("google", {}).get("thought_signature")
+                                signature = google_content.get("thought_signature")
 
 
                                 if signature:
@@ -642,7 +812,7 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                             # Yield argument json content deltas
 
 
-                            arg_delta = call.get("function", {}).get("arguments", "")
+                            arg_delta = function.get("arguments") or ""
 
 
                             if arg_delta:
@@ -818,6 +988,7 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
 
 
 
+@_sanitize_stream_translation
 class AnthropicToOpenAIStreamTranslator(StreamTranslator):
 
 
@@ -877,7 +1048,7 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                     try:
 
 
-                        data = json.loads(data_content)
+                        data = _as_dict(json.loads(data_content))
 
 
                         event_type = data.get("type")
@@ -890,7 +1061,8 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                             # Extract ID from message_start event
 
 
-                            msg_id = data.get("message", {}).get("id")
+                            message = _as_dict(data.get("message"))
+                            msg_id = message.get("id")
 
 
                             # Generate fallback ID if provider doesn't provide one
@@ -902,7 +1074,7 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                                 msg_id = f"chatcmpl-{os.urandom(8).hex()}"
 
 
-                            model_name = data.get("message", {}).get("model", provider_config.get("model_name", ""))
+                            model_name = message.get("model") or provider_config.get("model_name", "")
 
 
                             yield "data: " + json.dumps({
@@ -914,7 +1086,7 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                                 "object": "chat.completion.chunk",
 
 
-                                "created": int(data.get("message", {}).get("created", 0)) if "created" in data.get("message", {}) else int(__import__('time').time()),
+                                "created": int(message.get("created") or __import__('time').time()),
 
 
                                 "model": model_name,
@@ -942,11 +1114,11 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
 
 
                         elif event_type == "content_block_start":
-                            block = data.get("content_block", {})
+                            block = _as_dict(data.get("content_block"))
                             block_index = data.get("index")
                             if block.get("type") == "tool_use":
-                                tool_id = block.get("id", "")
-                                tool_name = block.get("name", "")
+                                tool_id = block.get("id") or ""
+                                tool_name = block.get("name") or ""
                                 tool_blocks[block_index] = {
                                     "id": tool_id,
                                     "name": tool_name,
@@ -974,7 +1146,7 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                                 next_tool_index += 1
 
                         elif event_type == "content_block_delta":
-                            delta = data.get("delta", {})
+                            delta = _as_dict(data.get("delta"))
                             delta_type = delta.get("type")
                             block_index = data.get("index")
                             
@@ -1013,7 +1185,7 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
                                         }]
                                     }) + "\n\n"
                             elif delta_type == "input_json_delta" and block_index in tool_blocks:
-                                partial_json = delta.get("partial_json", "")
+                                partial_json = delta.get("partial_json") or ""
                                 tool_info = tool_blocks[block_index]
                                 yield "data: " + json.dumps({
                                     "id": msg_id or f"chatcmpl-{os.urandom(8).hex()}",
@@ -1034,7 +1206,7 @@ class AnthropicToOpenAIStreamTranslator(StreamTranslator):
 
 
                         elif event_type == "message_delta":
-                            anth_stop = data.get("delta", {}).get("stop_reason")
+                            anth_stop = _as_dict(data.get("delta")).get("stop_reason")
                             stop_reason = "stop"
                             if anth_stop == "end_turn":
                                 stop_reason = "stop"

@@ -45,7 +45,7 @@ def generate_text(num_tokens: int) -> str:
         "deserunt", "mollit", "anim", "id", "est", "laborum", "atque", "corporis",
         "suscipit", "laboriosam", "nisi", "aliquid", "commodi", "consequatur",
     ]
-    num_words = max(1, num_tokens)
+    num_words = max(1, min(num_tokens, 20))
     selected = []
     for i in range(num_words):
         selected.append(words[i % len(words)])

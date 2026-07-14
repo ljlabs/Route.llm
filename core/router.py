@@ -44,10 +44,21 @@ class RouterService:
         self.per_provider_limiter = per_provider_limiter or get_per_provider_limiter()
         self.logger_service = logger_service
 
+    @staticmethod
+    def _get_provider_headers(
+        provider: BaseProvider,
+        anthropic_version: str,
+    ) -> Dict[str, str]:
+        """Apply the Anthropic version header only to Anthropic providers."""
+        if getattr(provider, "api_type", "").lower() == "anthropic":
+            return provider.get_headers(anthropic_version=anthropic_version)
+        return provider.get_headers()
+
     async def route_anthropic_request(
         self,
         anthropic_request: Dict[str, Any],
-        stream: bool = False
+        stream: bool = False,
+        anthropic_version: str = "2023-06-01"
     ) -> JSONResponse | StreamingResponse:
         """
         Route an Anthropic-format request to the active provider.
@@ -55,6 +66,7 @@ class RouterService:
         Args:
             anthropic_request: Request in Anthropic /v1/messages format
             stream: Whether to stream the response
+            anthropic_version: The anthropic-version header value
 
         Returns:
             JSONResponse or StreamingResponse
@@ -123,6 +135,7 @@ class RouterService:
                     path="/v1/messages",
                     target_format="anthropic",
                     request_id=request_id,
+                    anthropic_version=anthropic_version,
                 )
             else:
                 return await self._handle_non_streaming(
@@ -133,6 +146,7 @@ class RouterService:
                     path="/v1/messages",
                     request_id=request_id,
                     anthropic_request=anthropic_request,
+                    anthropic_version=anthropic_version,
                 )
         except HTTPException:
             raise
@@ -234,6 +248,7 @@ class RouterService:
                     path="/v1/chat/completions",
                     target_format="openai",
                     request_id=request_id,
+                    anthropic_version="2023-06-01",
                 )
             else:
                 return await self._handle_non_streaming(
@@ -245,6 +260,7 @@ class RouterService:
                     is_openai_target=True,
                     request_id=request_id,
                     anthropic_request=anthropic_request,
+                    anthropic_version="2023-06-01",
                 )
         except HTTPException:
             raise
@@ -274,6 +290,7 @@ class RouterService:
         is_openai_target: bool = False,
         request_id: Optional[int] = None,
         anthropic_request: Optional[Dict[str, Any]] = None,
+        anthropic_version: str = "2023-06-01",
     ) -> JSONResponse:
         """Handle non-streaming request."""
         import database as db
@@ -303,7 +320,7 @@ class RouterService:
         response = await self.http_client.post(
             provider.endpoint_url,
             json=wrapped_request,
-            headers=provider.get_headers()
+            headers=self._get_provider_headers(provider, anthropic_version)
         )
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
@@ -546,6 +563,7 @@ class RouterService:
         path: str = "/v1/messages",
         target_format: str = "anthropic",
         request_id: Optional[int] = None,
+        anthropic_version: str = "2023-06-01",
     ) -> StreamingResponse:
         """Handle streaming request."""
         import database as db
@@ -560,26 +578,43 @@ class RouterService:
             "POST",
             provider.endpoint_url,
             json=wrapped_request,
-            headers=provider.get_headers()
+            headers=self._get_provider_headers(provider, anthropic_version)
         )
 
         # Send request with streaming
         response = await self.http_client.send(request, stream=True)
+        provider_content_type = response.headers.get("content-type", "")
 
-        # LOGGING Stage 3 — first bytes received from provider (headers/status)
-        db.add_log_event(
-            request_id,
-            stage="provider_response",
-            body="[Streaming — body accumulating]",
-            status_code=response.status_code,
-        )
-
-        # Handle error responses
+        # Handle error responses before attempting a stream translation.
         if response.status_code >= 400:
             await response.aread()
             error_text = response.text
+            db.add_log_event(
+                request_id,
+                stage="provider_response",
+                body=error_text,
+                status_code=response.status_code,
+            )
             await response.aclose()
             await self._handle_http_error(provider, response, req_body_str, error_text, path=path, request_id=request_id)
+
+        # Record JSON fallback responses in full so they can be inspected in the dashboard.
+        # Real SSE bodies remain unconsumed for the translator and log their framing metadata.
+        if "application/json" in provider_content_type.lower():
+            raw_provider_body = (await response.aread()).decode("utf-8", errors="replace")
+            provider_response_body = raw_provider_body
+        else:
+            provider_response_body = json.dumps({
+                "content_type": provider_content_type or "unknown",
+                "content_length": response.headers.get("content-length") or "unknown",
+                "stream_mode": "sse",
+            })
+        db.add_log_event(
+            request_id,
+            stage="provider_response",
+            body=provider_response_body,
+            status_code=response.status_code,
+        )
 
         # Get stream translator from provider
         response_format = db.get_response_format()
@@ -635,7 +670,20 @@ class RouterService:
                 if tokens_received == 0:
                     tokens_received = self._estimate_response_tokens(accumulated_blocks)
 
-                final_body = json.dumps(accumulated_blocks, indent=2) if accumulated_blocks else "[Streamed response]"
+                if accumulated_blocks:
+                    final_body = json.dumps(accumulated_blocks, indent=2)
+                else:
+                    final_body = json.dumps({
+                        "stream_diagnostics": {
+                            "provider_content_type": provider_content_type or "unknown",
+                            "upstream_mode": (
+                                "json_fallback"
+                                if "application/json" in provider_content_type.lower()
+                                else "sse"
+                            ),
+                            "sse_chunks_emitted": chunk_count,
+                        }
+                    }, indent=2)
 
                 # Log SSE validation results
                 if hasattr(stream_translator, 'validation_checked') and stream_translator.validation_checked > 0:
