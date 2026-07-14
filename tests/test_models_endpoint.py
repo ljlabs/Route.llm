@@ -115,6 +115,56 @@ class TestModelsEndpointProxy:
         assert isinstance(model["created"], int)
 
 
+class TestAnthropicModelAliasFallback:
+    """Tests for standard Anthropic aliases on the compatibility endpoint."""
+
+    @pytest.mark.parametrize("model", [
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+        "claude-3-7-sonnet-latest",
+    ])
+    def test_standard_alias_routes_to_active_provider(self, monkeypatch, model):
+        client = TestClient(app)
+        db.add_provider("TestProvider", "openai", "http://test.com", "sk-test", "gpt-4o", is_active=1)
+        received = {}
+
+        class StubRouter:
+            async def route_anthropic_request(self, request, **kwargs):
+                received["request"] = request
+                received["kwargs"] = kwargs
+                return {"ok": True}
+
+        monkeypatch.setattr("api.proxy.get_router_service", lambda: StubRouter())
+        response = client.post("/v1/messages", headers={
+            "x-api-key": "test-key",
+            "anthropic-version": "2023-06-01",
+        }, json={
+            "model": model,
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        })
+
+        assert response.status_code == 200
+        assert received["request"]["model"] == model
+        assert received["kwargs"]["stream"] is False
+
+    def test_unknown_claude_like_model_is_rejected(self):
+        client = TestClient(app)
+        db.add_provider("TestProvider", "openai", "http://test.com", "sk-test", "gpt-4o", is_active=1)
+
+        response = client.post("/v1/messages", headers={
+            "x-api-key": "test-key",
+            "anthropic-version": "2023-06-01",
+        }, json={
+            "model": "claude-definitely-not-a-real-model",
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+        })
+
+        assert response.status_code == 404
+        assert response.json()["error"]["type"] == "invalid_request_error"
+
+
 class TestModelsEndpointRouting:
     """Tests for the /api/routing/models endpoint."""
 

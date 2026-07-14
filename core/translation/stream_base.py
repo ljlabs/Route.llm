@@ -62,6 +62,14 @@ def _sanitize_sse_chunk(chunk: str) -> str:
             continue
 
         sanitized_data = _without_null_values(data)
+        # OpenAI requires the finish_reason member on every choice. Preserve the
+        # project's null-free output policy by using an empty pending value rather
+        # than dropping an upstream null-valued key from intermediate chunks.
+        if isinstance(data, dict) and isinstance(data.get("choices"), list):
+            for index, choice in enumerate(data["choices"]):
+                if isinstance(choice, dict) and "finish_reason" in choice and choice["finish_reason"] is None:
+                    if isinstance(sanitized_data, dict) and index < len(sanitized_data.get("choices", [])):
+                        sanitized_data["choices"][index]["finish_reason"] = ""
         if sanitized_data is None:
             sanitized_data = {}
         compact_json = ": " not in data_content and ", " not in data_content
@@ -178,6 +186,94 @@ async def _iter_openai_sse_lines(response):
     yield "data: [DONE]"
 
 
+async def _iter_anthropic_sse_events(response, accumulated_blocks: list):
+    """Adapt a buffered Anthropic Messages response to a complete SSE event sequence."""
+    raw_body = response.content if getattr(response, "is_stream_consumed", False) else await response.aread()
+    if isinstance(raw_body, bytes):
+        raw_body = raw_body.decode("utf-8", errors="replace")
+
+    try:
+        message = _as_dict(json.loads(raw_body))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Upstream returned invalid JSON for a streaming request") from exc
+
+    if not message:
+        raise ValueError("Upstream JSON response is not an Anthropic message object")
+
+    message_id = message.get("id") or f"msg_local_{os.urandom(8).hex()}"
+    model_name = message.get("model") or "unknown"
+    usage = _as_dict(message.get("usage"))
+    input_tokens = usage.get("input_tokens") or 0
+    output_tokens = usage.get("output_tokens") or 0
+
+    def event(event_type: str, payload: Dict[str, Any]) -> str:
+        return f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+
+    yield event("message_start", {
+        "type": "message_start",
+        "message": {
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "model": model_name,
+            "content": [],
+            "usage": {"input_tokens": input_tokens, "output_tokens": 0},
+        },
+    })
+
+    for index, raw_block in enumerate(_as_list(message.get("content"))):
+        block = _as_dict(raw_block)
+        block_type = block.get("type")
+        if block_type == "text":
+            text = block.get("text") or ""
+            yield event("content_block_start", {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "text", "text": ""},
+            })
+            if text:
+                yield event("content_block_delta", {
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {"type": "text_delta", "text": text},
+                })
+            yield event("content_block_stop", {"type": "content_block_stop", "index": index})
+            accumulated_blocks.append({"type": "text", "text": text})
+        elif block_type == "tool_use":
+            tool_input = _as_dict(block.get("input"))
+            yield event("content_block_start", {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": block.get("id") or f"toolu_{os.urandom(8).hex()}",
+                    "name": block.get("name") or "unknown_tool",
+                    "input": {},
+                },
+            })
+            yield event("content_block_delta", {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "input_json_delta", "partial_json": json.dumps(tool_input)},
+            })
+            yield event("content_block_stop", {"type": "content_block_stop", "index": index})
+            accumulated_blocks.append({
+                "type": "tool_use",
+                "id": block.get("id") or f"toolu_{os.urandom(8).hex()}",
+                "name": block.get("name") or "unknown_tool",
+                "input": tool_input,
+            })
+
+    stop_reason = message.get("stop_reason") or "end_turn"
+    message_delta = {
+        "type": "message_delta",
+        "delta": {"stop_reason": stop_reason},
+        "usage": {"output_tokens": output_tokens},
+    }
+    if message.get("stop_sequence") is not None:
+        message_delta["delta"]["stop_sequence"] = message["stop_sequence"]
+    yield event("message_delta", message_delta)
+    yield event("message_stop", {"type": "message_stop"})
 
 
 class StreamTranslator(ABC):
@@ -294,7 +390,25 @@ class PassthroughStreamTranslator(StreamTranslator):
             else response.aiter_lines()
         )
         line_suffix = "\n\n" if "application/json" in response_content_type else "\n"
+        buffered_anthropic = (
+            "application/json" in response_content_type
+            and provider_config.get("api_type", "").lower() == "anthropic"
+        )
 
+        if buffered_anthropic:
+            try:
+                async for output in _iter_anthropic_sse_events(response, accumulated_blocks):
+                    chunk_count += 1
+                    if self.validate_format == "anthropic":
+                        for line in output.splitlines():
+                            if line.startswith("data:"):
+                                self.validation_checked += 1
+                                if not validate_anthropic_sse_line(line):
+                                    self.validation_warnings.append(line[:120])
+                    yield output
+            finally:
+                await response.aclose()
+            return
 
         try:
 

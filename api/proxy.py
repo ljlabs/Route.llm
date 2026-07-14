@@ -5,6 +5,7 @@ Anthropic and OpenAI compatible endpoints that route to configured providers.
 """
 
 from typing import Any, Dict, Union
+import re
 from fastapi import APIRouter, HTTPException, Request, status
 from core.router import get_router_service
 from models.request import AnthropicRequest, OpenAIRequest
@@ -14,6 +15,29 @@ import database as db
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["proxy"])
+
+
+_STANDARD_ANTHROPIC_MODEL_ALIAS = re.compile(
+    r"^claude-(?:(?:3(?:-\d+)?)-(?:opus|sonnet|haiku)|(?:opus|sonnet|haiku)-4(?:-\d+)?)(?:-(?:\d{8}|latest))?$"
+)
+
+
+def _model_is_available(model_id: str) -> bool:
+    """Return whether a model is explicitly advertised by this router."""
+    if any(mapping["model_id"] == model_id for mapping in db.get_model_mappings()):
+        return True
+    active_provider = db.get_active_provider()
+    return bool(active_provider and active_provider["model_name"] == model_id)
+
+
+def _anthropic_model_is_available(model_id: str) -> bool:
+    """Allow explicit models and standard Claude aliases with an active fallback."""
+    if _model_is_available(model_id):
+        return True
+    return bool(
+        db.get_active_provider()
+        and _STANDARD_ANTHROPIC_MODEL_ALIAS.fullmatch(model_id)
+    )
 
 
 @router.get("/v1/models")
@@ -63,6 +87,20 @@ async def list_models_no_prefix(request: Request):
     """Model list endpoint without the /v1/ prefix."""
     return await list_models(request)
 
+
+@router.get("/v1/models/{model_id}")
+async def retrieve_model(model_id: str):
+    """Retrieve one OpenAI model object, or a compatibility-format 404."""
+    mappings = db.get_model_mappings()
+    model_ids = {mapping["model_id"] for mapping in mappings}
+    active_provider = db.get_active_provider()
+    if active_provider:
+        model_ids.add(active_provider["model_name"])
+    if model_id not in model_ids:
+        raise HTTPException(status_code=404, detail=f"The model '{model_id}' does not exist")
+    return {"id": model_id, "object": "model", "created": 0, "owned_by": "router"}
+
+
 @router.delete("/v1/models", status_code=status.HTTP_405_METHOD_NOT_ALLOWED)
 async def delete_models_not_allowed():
     """DELETE /v1/models is not allowed."""
@@ -82,6 +120,8 @@ async def proxy_anthropic_messages(request: Request, anthropic_request: Anthropi
         # Pydantic model converts to dict for the router service
         req_body = anthropic_request.model_dump(exclude_none=True)
         stream = anthropic_request.stream
+        if not _anthropic_model_is_available(anthropic_request.model):
+            raise HTTPException(status_code=404, detail=f"The model '{anthropic_request.model}' does not exist")
 
         router_service = get_router_service()
         return await router_service.route_anthropic_request(req_body, stream=stream, anthropic_version=anthropic_version)
@@ -91,6 +131,31 @@ async def proxy_anthropic_messages(request: Request, anthropic_request: Anthropi
     except Exception as e:
         logger.error(f"Error in Anthropic proxy: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/v1/messages/count_tokens")
+async def count_anthropic_tokens(request: Request):
+    """Provide a deterministic local estimate for Anthropic's optional token count API."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed JSON request body")
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise HTTPException(status_code=400, detail="messages must be a non-empty array")
+
+    def content_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return " ".join(
+                part.get("text", "") for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        return ""
+
+    text = " ".join(content_text(message.get("content")) for message in messages if isinstance(message, dict))
+    return {"input_tokens": max(1, len(text.split()))}
 
 
 @router.post("/v1/chat/completions")
@@ -103,6 +168,8 @@ async def proxy_openai_completions(request: OpenAIRequest):
         # Pydantic model converts to dict for the router service
         req_body = request.model_dump(exclude_none=True)
         stream = request.stream
+        if not _model_is_available(request.model):
+            raise HTTPException(status_code=404, detail=f"The model '{request.model}' does not exist")
 
         router_service = get_router_service()
         return await router_service.route_openai_request(req_body, stream=stream)

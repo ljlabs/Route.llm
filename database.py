@@ -490,8 +490,16 @@ def enforce_log_limit():
         count = cursor.fetchone()['count']
         if count > limit:
             to_delete = count - limit
-            # Delete oldest logs; events will be removed via ON DELETE CASCADE
-            cursor.execute(f"DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY timestamp ASC LIMIT {to_delete})")
+            # Only completed requests may be pruned.  A concurrent request has a
+            # sentinel status of 0 until its lifecycle event is recorded; deleting
+            # it here races add_log_event/complete_request_log and violates the FK.
+            cursor.execute(
+                "DELETE FROM logs WHERE id IN ("
+                "SELECT id FROM logs WHERE response_status != 0 "
+                "ORDER BY timestamp ASC LIMIT ?"
+                ")",
+                (to_delete,),
+            )
             conn.commit()
     except sqlite3.OperationalError:
         pass  # Database locked, skip this enforcement cycle

@@ -5,16 +5,23 @@ Pydantic models for API request validation.
 """
 
 from typing import Optional, List, Any, Union
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Message(BaseModel):
-    """Chat message."""
+    """A message accepted by either OpenAI or Anthropic compatibility routes."""
     role: str = Field(..., description="Message role: system, user, assistant, tool")
     content: Optional[Union[str, List[Any]]] = Field(default=None, description="Message content")
     tool_calls: Optional[List[Any]] = Field(default=None, description="Tool calls made by assistant")
     tool_call_id: Optional[str] = Field(default=None, description="Tool call ID for tool response messages")
     name: Optional[str] = Field(default=None, description="Name for function calling (legacy)")
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        if value not in {"system", "user", "assistant", "tool", "developer"}:
+            raise ValueError("role must be one of system, user, assistant, tool, or developer")
+        return value
 
 
 class FlexibleTool(BaseModel):
@@ -41,11 +48,11 @@ class FlexibleTool(BaseModel):
 
 class AnthropicRequest(BaseModel):
     """Anthropic /v1/messages API request model."""
-    model: str = Field(..., description="Model identifier")
-    messages: List[Message] = Field(..., description="Chat messages")
+    model: str = Field(..., min_length=1, description="Model identifier")
+    messages: List[Message] = Field(..., min_length=1, description="Chat messages")
     system: Optional[Union[str, List[Any]]] = Field(default=None, description="System prompt")
     tools: Optional[List[FlexibleTool]] = Field(default=None, description="Available tools")
-    max_tokens: int = Field(default=4096, description="Maximum tokens to generate")
+    max_tokens: int = Field(..., gt=0, description="Maximum tokens to generate")
     temperature: Optional[float] = Field(default=None, description="Sampling temperature")
     top_p: Optional[float] = Field(default=None, description="Nucleus sampling parameter")
     stream: bool = Field(default=False, description="Enable streaming")
@@ -55,12 +62,21 @@ class AnthropicRequest(BaseModel):
     stop_sequences: Optional[List[str]] = Field(default=None, description="Custom stop sequences")
     tool_choice: Optional[dict] = Field(default=None, description="Tool selection control")
     thinking: Optional[dict] = Field(default=None, description="Extended thinking config")
+    metadata: Optional[dict] = Field(default=None, description="Request metadata")
+
+    @model_validator(mode="after")
+    def validate_message_sequence(self):
+        if self.messages[0].role != "user":
+            raise ValueError("Anthropic conversations must begin with a user message")
+        if any(message.role not in {"user", "assistant"} for message in self.messages):
+            raise ValueError("Anthropic messages only support user and assistant roles")
+        return self
 
 
 class OpenAIRequest(BaseModel):
     """OpenAI /v1/chat/completions API request model."""
-    model: str = Field(..., description="Model identifier")
-    messages: List[Message] = Field(..., description="Chat messages")
+    model: str = Field(..., min_length=1, description="Model identifier")
+    messages: List[Message] = Field(..., min_length=1, description="Chat messages")
     tools: Optional[List[FlexibleTool]] = Field(default=None, description="Available tools")
     max_tokens: Optional[int] = Field(default=None, description="Maximum tokens to generate")
     temperature: Optional[float] = Field(default=None, description="Sampling temperature")
@@ -76,6 +92,7 @@ class OpenAIRequest(BaseModel):
     seed: Optional[int] = Field(default=None, description="System fingerprint seed")
     tool_choice: Optional[Union[str, dict]] = Field(default=None, description="Tool selection control")
     response_format: Optional[dict] = Field(default=None, description="Response format (JSON mode)")
+    stream_options: Optional[dict] = Field(default=None, description="Streaming response options")
     functions: Optional[List[dict]] = Field(default=None, description="Legacy function calling")
 
 

@@ -275,17 +275,19 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
         openai_req["top_p"] = anth_req["top_p"]
     if "stream" in anth_req:
         openai_req["stream"] = anth_req["stream"]
-    # Additional parameters for full compatibility
-    if "top_k" in anth_req:
-        openai_req["top_k"] = anth_req["top_k"]
-    if "meta" in anth_req:
-        openai_req["meta"] = anth_req["meta"]
+    # `top_k`, metadata and thinking are Anthropic-specific and are not
+    # accepted by OpenAI-compatible upstreams. They are compatibility options:
+    # accept them at the public boundary but do not forward unsupported fields.
     if "stop_sequences" in anth_req:
         openai_req["stop"] = anth_req["stop_sequences"]
     if "tool_choice" in anth_req:
-        openai_req["tool_choice"] = anth_req["tool_choice"]
-    if "thinking" in anth_req:
-        openai_req["thinking"] = anth_req["thinking"]
+        choice = anth_req["tool_choice"]
+        if isinstance(choice, dict) and choice.get("type") == "tool":
+            openai_req["tool_choice"] = {"type": "function", "function": {"name": choice.get("name", "")}}
+        elif isinstance(choice, dict) and choice.get("type") == "none":
+            openai_req["tool_choice"] = "none"
+        else:
+            openai_req["tool_choice"] = choice
 
     return openai_req
 
@@ -416,27 +418,19 @@ def openai_to_anthropic_request(openai_req: dict, target_model: str) -> dict:
         anth_req["top_p"] = openai_req["top_p"]
     if "stream" in openai_req:
         anth_req["stream"] = openai_req["stream"]
-    # Additional OpenAI parameters for full compatibility
-    if "n" in openai_req:
-        anth_req["n"] = openai_req["n"]
+    # OpenAI-only sampling and presentation controls are intentionally not
+    # forwarded to an Anthropic upstream. They remain available to the router
+    # for response normalization, while this payload stays provider-valid.
     if "stop" in openai_req:
         anth_req["stop_sequences"] = openai_req["stop"] if isinstance(openai_req["stop"], list) else [openai_req["stop"]]
-    if "presence_penalty" in openai_req:
-        anth_req["presence_penalty"] = openai_req["presence_penalty"]
-    if "frequency_penalty" in openai_req:
-        anth_req["frequency_penalty"] = openai_req["frequency_penalty"]
-    if "logit_bias" in openai_req:
-        anth_req["logit_bias"] = openai_req["logit_bias"]
-    if "user" in openai_req:
-        anth_req["user"] = openai_req["user"]
-    if "seed" in openai_req:
-        anth_req["seed"] = openai_req["seed"]
     if "tool_choice" in openai_req:
-        anth_req["tool_choice"] = openai_req["tool_choice"]
-    if "response_format" in openai_req:
-        anth_req["response_format"] = openai_req["response_format"]
-    if "functions" in openai_req:
-        anth_req["functions"] = openai_req["functions"]
+        choice = openai_req["tool_choice"]
+        if isinstance(choice, dict) and choice.get("type") == "function":
+            anth_req["tool_choice"] = {"type": "tool", "name": (choice.get("function") or {}).get("name", "")}
+        elif choice == "none":
+            anth_req["tool_choice"] = {"type": "none"}
+        else:
+            anth_req["tool_choice"] = choice
 
     return anth_req
 
