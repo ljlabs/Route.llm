@@ -13,14 +13,26 @@ SIGNATURE_SEPARATOR = "____ts____"
 def _anthropic_image_to_openai(part: dict) -> dict:
     """Convert Anthropic image block to OpenAI image_url block."""
     source = part.get("source", {})
-    media_type = source.get("media_type", "image/png")
-    data = source.get("data", "")
-    return {
-        "type": "image_url",
-        "image_url": {
-            "url": f"data:{media_type};base64,{data}"
+    source_type = source.get("type", "base64")
+    if source_type == "url":
+        # URL source
+        url = source.get("url", "")
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": url
+            }
         }
-    }
+    else:
+        # base64 source (default)
+        media_type = source.get("media_type", "image/png")
+        data = source.get("data", "")
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{media_type};base64,{data}"
+            }
+        }
 
 
 def _openai_image_url_to_anthropic(part: dict) -> dict:
@@ -31,17 +43,35 @@ def _openai_image_url_to_anthropic(part: dict) -> dict:
     if isinstance(url, str) and url.startswith("data:"):
         header, _, data = url.partition(",")
         media_type = header.split(":", 1)[1].split(";")[0] if ":" in header else "image/png"
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data
+            }
+        }
+    elif isinstance(url, str) and url.startswith(("http://", "https://")):
+        # HTTP URL images should use URL source type
+        return {
+            "type": "image",
+            "source": {
+                "type": "url",
+                "url": url
+            }
+        }
     else:
+        # Fallback: treat as base64 data (for any other case)
         media_type = "image/png"
         data = url if isinstance(url, str) else ""
-    return {
-        "type": "image",
-        "source": {
-            "type": "base64",
-            "media_type": media_type,
-            "data": data
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data
+            }
         }
-    }
 
 
 def _anthropic_document_to_openai(part: dict) -> dict | None:
@@ -498,12 +528,31 @@ def openai_to_anthropic_response(openai_res: dict) -> dict:
     if choices:
         choice = choices[0]
         message = choice.get("message", {})
-        text_content = message.get("content", "")
-        if text_content:
-            content_blocks.append({
-                "type": "text",
-                "text": text_content
-            })
+        content = message.get("content", "")
+        # Content can be a string or a list of content parts (when images present)
+        if isinstance(content, str):
+            if content:
+                content_blocks.append({
+                    "type": "text",
+                    "text": content
+                })
+        elif isinstance(content, list):
+            # Process each content part
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                part_type = part.get("type")
+                if part_type == "text":
+                    content_blocks.append({
+                        "type": "text",
+                        "text": part.get("text", "")
+                    })
+                elif part_type == "image_url":
+                    # Convert OpenAI image_url to Anthropic image
+                    anthropic_image = _openai_image_url_to_anthropic(part)
+                    content_blocks.append(anthropic_image)
+                # Other part types (like tool_use) are not expected in OpenAI response
+                # but we can ignore them silently.
             
         tool_calls = message.get("tool_calls", [])
         if tool_calls:
@@ -555,6 +604,7 @@ def anthropic_to_openai_response(anth_res: dict) -> dict:
     """Translates Anthropic non-streaming response to OpenAI response (including tool calls)"""
     content = anth_res.get("content", [])
     text_content = ""
+    content_parts = []  # For mixed content (text + images)
     tool_calls = []
     
     for part in content:
@@ -563,6 +613,11 @@ def anthropic_to_openai_response(anth_res: dict) -> dict:
         part_type = part.get("type")
         if part_type == "text":
             text_content += part.get("text", "")
+            content_parts.append({"type": "text", "text": part.get("text", "")})
+        elif part_type == "image":
+            # Convert Anthropic image to OpenAI image_url
+            openai_image = _anthropic_image_to_openai(part)
+            content_parts.append(openai_image)
         elif part_type == "tool_use":
             tool_calls.append({
                 "id": part.get("id"),
@@ -582,11 +637,23 @@ def anthropic_to_openai_response(anth_res: dict) -> dict:
     elif anth_stop == "tool_use":
         stop_reason = "tool_calls"
 
+    # Determine the content field: if there are only text parts, use concatenated string;
+    # otherwise use list of content parts (for images)
+    if len(content_parts) > 0:
+        # Check if there are any non-text parts
+        has_non_text = any(part.get("type") != "text" for part in content_parts)
+        if has_non_text:
+            content_value = content_parts
+        else:
+            content_value = text_content if text_content else None
+    else:
+        content_value = None
+
     openai_choice = {
         "index": 0,
         "message": {
             "role": "assistant",
-            "content": text_content if text_content else None
+            "content": content_value
         },
         "finish_reason": stop_reason
     }

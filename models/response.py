@@ -10,11 +10,12 @@ from pydantic import BaseModel, Field
 
 class ContentBlock(BaseModel):
     """Content block in Anthropic response."""
-    type: str = Field(..., description="Block type: text, tool_use")
+    type: str = Field(..., description="Block type: text, tool_use, image")
     text: Optional[str] = Field(default=None, description="Text content")
     id: Optional[str] = Field(default=None, description="Tool use ID")
     name: Optional[str] = Field(default=None, description="Tool name")
     input: Optional[dict] = Field(default=None, description="Tool input")
+    source: Optional[dict] = Field(default=None, description="Source for image blocks (type, media_type, data/url)")
 
 
 class Usage(BaseModel):
