@@ -13,14 +13,26 @@ SIGNATURE_SEPARATOR = "____ts____"
 def _anthropic_image_to_openai(part: dict) -> dict:
     """Convert Anthropic image block to OpenAI image_url block."""
     source = part.get("source", {})
-    media_type = source.get("media_type", "image/png")
-    data = source.get("data", "")
-    return {
-        "type": "image_url",
-        "image_url": {
-            "url": f"data:{media_type};base64,{data}"
+    source_type = source.get("type", "base64")
+    if source_type == "url":
+        # URL source
+        url = source.get("url", "")
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": url
+            }
         }
-    }
+    else:
+        # base64 source (default)
+        media_type = source.get("media_type", "image/png")
+        data = source.get("data", "")
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{media_type};base64,{data}"
+            }
+        }
 
 
 def _openai_image_url_to_anthropic(part: dict) -> dict:
@@ -31,36 +43,55 @@ def _openai_image_url_to_anthropic(part: dict) -> dict:
     if isinstance(url, str) and url.startswith("data:"):
         header, _, data = url.partition(",")
         media_type = header.split(":", 1)[1].split(";")[0] if ":" in header else "image/png"
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data
+            }
+        }
+    elif isinstance(url, str) and url.startswith(("http://", "https://")):
+        # HTTP URL images should use URL source type
+        return {
+            "type": "image",
+            "source": {
+                "type": "url",
+                "url": url
+            }
+        }
     else:
+        # Fallback: treat as base64 data (for any other case)
         media_type = "image/png"
         data = url if isinstance(url, str) else ""
-    return {
-        "type": "image",
-        "source": {
-            "type": "base64",
-            "media_type": media_type,
-            "data": data
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": data
+            }
         }
-    }
 
 
 def _anthropic_document_to_openai(part: dict) -> dict | None:
-    """Convert an Anthropic base64 document to an OpenAI Responses-style file block."""
+    """Convert an Anthropic base64 document to an OpenAI Chat file block."""
     source = part.get("source") or {}
     data = source.get("data")
     if source.get("type") != "base64" or not isinstance(data, str) or not data:
         return None
-    media_type = source.get("media_type") or "application/octet-stream"
     filename = part.get("title") or source.get("filename") or "upload"
     return {
-        "type": "input_file",
-        "filename": filename,
-        "file_data": f"data:{media_type};base64,{data}",
+        "type": "file",
+        "file": {
+            "filename": filename,
+            "file_data": data,
+        },
     }
 
 
 def _openai_file_to_anthropic(part: dict) -> dict | None:
-    """Convert OpenAI input_file/file base64 payloads to Anthropic documents."""
+    """Convert OpenAI Chat/Responses inline file payloads to Anthropic documents."""
     nested_file = part.get("file") if isinstance(part.get("file"), dict) else {}
     encoded = part.get("file_data") or nested_file.get("file_data")
     if not encoded:
@@ -68,7 +99,13 @@ def _openai_file_to_anthropic(part: dict) -> dict | None:
     if not isinstance(encoded, str) or not encoded:
         return None
 
-    media_type = part.get("mime_type") or nested_file.get("mime_type") or "application/octet-stream"
+    filename = part.get("filename") or nested_file.get("filename")
+    media_type = part.get("mime_type") or nested_file.get("mime_type")
+    if not media_type and filename:
+        import mimetypes
+        media_type = mimetypes.guess_type(filename)[0]
+    media_type = media_type or "application/octet-stream"
+
     data = encoded
     if encoded.startswith("data:"):
         header, _, data = encoded.partition(",")
@@ -80,7 +117,6 @@ def _openai_file_to_anthropic(part: dict) -> dict | None:
         "type": "document",
         "source": {"type": "base64", "media_type": media_type, "data": data},
     }
-    filename = part.get("filename") or nested_file.get("filename")
     if filename:
         document["title"] = filename
     return document
@@ -174,8 +210,9 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
         # Handle complex message content
         if isinstance(content, list):
             text_content = ""
+            content_parts = []
             tool_calls = []
-            image_blocks = []
+            has_non_text_content = False
             
             for part in content:
                 if not isinstance(part, dict):
@@ -183,16 +220,21 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
                 part_type = part.get("type")
                 
                 if part_type == "text":
-                    text_content += part.get("text", "")
+                    text = part.get("text", "")
+                    text_content += text
+                    content_parts.append({"type": "text", "text": text})
                 elif part_type == "image":
-                    image_blocks.append(_anthropic_image_to_openai(part))
+                    content_parts.append(_anthropic_image_to_openai(part))
+                    has_non_text_content = True
                 elif part_type == "image_url":
                     # Already in OpenAI format — pass through as-is
-                    image_blocks.append(part)
+                    content_parts.append(part)
+                    has_non_text_content = True
                 elif part_type == "document":
                     document = _anthropic_document_to_openai(part)
                     if document:
-                        image_blocks.append(document)
+                        content_parts.append(document)
+                        has_non_text_content = True
                 elif part_type == "tool_use":
                     tool_id = part.get("id")
                     signature = None
@@ -264,23 +306,13 @@ def anthropic_to_openai_request(anth_req: dict, target_model: str) -> dict:
                             "content": tool_text
                         })
             
-            # If there's text, tool calls, or images for this turn, append the message
-            if text_content or tool_calls or image_blocks:
-                if image_blocks:
-                    # Build content array with text + images
-                    content_parts = []
-                    if text_content:
-                        content_parts.append({"type": "text", "text": text_content})
-                    content_parts.extend(image_blocks)
-                    openai_msg = {
-                        "role": role,
-                        "content": content_parts
-                    }
-                else:
-                    openai_msg = {
-                        "role": role,
-                        "content": text_content
-                    }
+            # Preserve multimodal content order; image labels and interleaved prompts
+            # can change meaning when regrouped by content type.
+            if text_content or tool_calls or has_non_text_content:
+                openai_msg = {
+                    "role": role,
+                    "content": content_parts if has_non_text_content else text_content
+                }
                 if tool_calls:
                     openai_msg["tool_calls"] = tool_calls
                 messages.append(openai_msg)
@@ -498,12 +530,31 @@ def openai_to_anthropic_response(openai_res: dict) -> dict:
     if choices:
         choice = choices[0]
         message = choice.get("message", {})
-        text_content = message.get("content", "")
-        if text_content:
-            content_blocks.append({
-                "type": "text",
-                "text": text_content
-            })
+        content = message.get("content", "")
+        # Content can be a string or a list of content parts (when images present)
+        if isinstance(content, str):
+            if content:
+                content_blocks.append({
+                    "type": "text",
+                    "text": content
+                })
+        elif isinstance(content, list):
+            # Process each content part
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                part_type = part.get("type")
+                if part_type == "text":
+                    content_blocks.append({
+                        "type": "text",
+                        "text": part.get("text", "")
+                    })
+                elif part_type == "image_url":
+                    # Convert OpenAI image_url to Anthropic image
+                    anthropic_image = _openai_image_url_to_anthropic(part)
+                    content_blocks.append(anthropic_image)
+                # Other part types (like tool_use) are not expected in OpenAI response
+                # but we can ignore them silently.
             
         tool_calls = message.get("tool_calls", [])
         if tool_calls:
@@ -555,6 +606,7 @@ def anthropic_to_openai_response(anth_res: dict) -> dict:
     """Translates Anthropic non-streaming response to OpenAI response (including tool calls)"""
     content = anth_res.get("content", [])
     text_content = ""
+    content_parts = []  # For mixed content (text + images)
     tool_calls = []
     
     for part in content:
@@ -563,6 +615,11 @@ def anthropic_to_openai_response(anth_res: dict) -> dict:
         part_type = part.get("type")
         if part_type == "text":
             text_content += part.get("text", "")
+            content_parts.append({"type": "text", "text": part.get("text", "")})
+        elif part_type == "image":
+            # Convert Anthropic image to OpenAI image_url
+            openai_image = _anthropic_image_to_openai(part)
+            content_parts.append(openai_image)
         elif part_type == "tool_use":
             tool_calls.append({
                 "id": part.get("id"),
@@ -582,11 +639,23 @@ def anthropic_to_openai_response(anth_res: dict) -> dict:
     elif anth_stop == "tool_use":
         stop_reason = "tool_calls"
 
+    # Determine the content field: if there are only text parts, use concatenated string;
+    # otherwise use list of content parts (for images)
+    if len(content_parts) > 0:
+        # Check if there are any non-text parts
+        has_non_text = any(part.get("type") != "text" for part in content_parts)
+        if has_non_text:
+            content_value = content_parts
+        else:
+            content_value = text_content if text_content else None
+    else:
+        content_value = None
+
     openai_choice = {
         "index": 0,
         "message": {
             "role": "assistant",
-            "content": text_content if text_content else None
+            "content": content_value
         },
         "finish_reason": stop_reason
     }
