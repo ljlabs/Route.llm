@@ -36,34 +36,37 @@ class GeminiProvider(OpenAIProvider):
         return sanitize_openai_payload(request, is_gemini=True)
 
     def detect_pdf_content(self, anthropic_request: Dict[str, Any]) -> bool:
-        """Check if a request contains PDF content (supports both Anthropic and OpenAI formats)."""
-        for msg in anthropic_request.get("messages", []):
-            content = msg.get("content")
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict):
-                        if part.get("type") == "image":
-                            media_type = part.get("source", {}).get("media_type", "")
-                            if media_type == "application/pdf":
-                                return True
-                        elif part.get("type") == "image_url":
-                            url = part.get("image_url", {}).get("url", "")
-                            if url.startswith("data:application/pdf"):
-                                return True
-                        elif part.get("type") == "tool_result":
-                            tool_content = part.get("content")
-                            if isinstance(tool_content, list):
-                                for sub in tool_content:
-                                    if isinstance(sub, dict):
-                                        if sub.get("type") == "image":
-                                            media_type = sub.get("source", {}).get("media_type", "")
-                                            if media_type == "application/pdf":
-                                                return True
-                                        elif sub.get("type") == "image_url":
-                                            url = sub.get("image_url", {}).get("url", "")
-                                            if url.startswith("data:application/pdf"):
-                                                return True
-        return False
+        """Detect PDF and generic base64 documents that require Gemini inline_data."""
+        def has_native_media(content: Any) -> bool:
+            if not isinstance(content, list):
+                return False
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                part_type = part.get("type")
+                if part_type == "tool_result" and has_native_media(part.get("content")):
+                    return True
+                if part_type == "image":
+                    source = part.get("source") or {}
+                    if source.get("media_type") == "application/pdf":
+                        return True
+                elif part_type == "image_url":
+                    image_url = part.get("image_url") or {}
+                    url = image_url.get("url", "") if isinstance(image_url, dict) else image_url
+                    if isinstance(url, str) and url.startswith("data:application/pdf"):
+                        return True
+                elif part_type == "document":
+                    source = part.get("source") or {}
+                    if source.get("type") == "base64" and source.get("data"):
+                        return True
+                elif part_type in {"input_file", "file"}:
+                    nested_file = part.get("file") if isinstance(part.get("file"), dict) else {}
+                    if (part.get("file_data") or part.get("file_url")
+                            or nested_file.get("file_data") or nested_file.get("file_url")):
+                        return True
+            return False
+
+        return any(has_native_media(message.get("content")) for message in anthropic_request.get("messages", []))
 
     def build_native_pdf_endpoint(self) -> str:
         """Derive the native generateContent endpoint URL from the OpenAI-compat endpoint."""
@@ -115,6 +118,15 @@ class GeminiProvider(OpenAIProvider):
                                 "data": source.get("data", "")
                             }
                         })
+                    elif part_type == "document":
+                        source = part.get("source", {})
+                        if source.get("type") == "base64" and source.get("data"):
+                            parts.append({
+                                "inline_data": {
+                                    "mime_type": source.get("media_type", "application/octet-stream"),
+                                    "data": source["data"]
+                                }
+                            })
                     elif part_type == "image_url":
                         url = part.get("image_url", {}).get("url", "")
                         if url.startswith("data:"):
@@ -141,6 +153,15 @@ class GeminiProvider(OpenAIProvider):
                                                 "data": source.get("data", "")
                                             }
                                         })
+                                    elif sub.get("type") == "document":
+                                        source = sub.get("source", {})
+                                        if source.get("type") == "base64" and source.get("data"):
+                                            parts.append({
+                                                "inline_data": {
+                                                    "mime_type": source.get("media_type", "application/octet-stream"),
+                                                    "data": source["data"]
+                                                }
+                                            })
                                     elif sub.get("type") == "image_url":
                                         url = sub.get("image_url", {}).get("url", "")
                                         if url.startswith("data:"):

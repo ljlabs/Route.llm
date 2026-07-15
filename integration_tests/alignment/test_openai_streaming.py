@@ -2,8 +2,8 @@
 Conformance tests for streaming POST /v1/chat/completions (stream=true).
 """
 import pytest
-from validators import validate_openai_stream_chunk
-from sse import iter_openai_sse
+from .validators import validate_openai_stream_chunk
+from .sse import iter_openai_sse
 
 pytestmark = [pytest.mark.openai, pytest.mark.streaming]
 

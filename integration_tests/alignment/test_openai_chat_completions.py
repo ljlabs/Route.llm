@@ -3,7 +3,7 @@ Conformance tests for POST /v1/chat/completions (non-streaming) against
 the OpenAI spec: https://platform.openai.com/docs/api-reference/chat
 """
 import pytest
-from validators import validate_openai_chat_completion, validate_openai_error
+from .validators import validate_openai_chat_completion, validate_openai_error
 
 pytestmark = pytest.mark.openai
 

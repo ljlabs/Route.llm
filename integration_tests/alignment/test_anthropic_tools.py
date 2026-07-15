@@ -2,8 +2,8 @@
 Conformance tests for Anthropic-style tool use.
 """
 import pytest
-from validators import validate_anthropic_message
-from sse import iter_anthropic_sse
+from .validators import validate_anthropic_message
+from .sse import iter_anthropic_sse
 
 pytestmark = [pytest.mark.anthropic, pytest.mark.tools]
 

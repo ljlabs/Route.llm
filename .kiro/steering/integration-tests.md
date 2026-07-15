@@ -1,30 +1,36 @@
-# Integration Tests
+# Test Suite Layout
 
-## Running Integration Tests
+- `tests/` contains fast unit, translation, database, and in-process API tests.
+- `integration_tests/` contains tests that exercise a running router or coordinate multiple local services.
+- `load_test/` contains only performance tooling, the local mock backend, and generated load reports.
 
-The integration test orchestrator is at `load_test/run_integration.py`. It handles everything — starts the mock server, starts the proxy server, configures them, and runs the load test.
+## Protocol-Conformance Integration Tests
 
-```bash
-python load_test/run_integration.py
+The OpenAI and Anthropic alignment suite is at `integration_tests/alignment/`. It targets an already-running router; it does not start or configure one.
+
+From the repository root:
+
+```powershell
+$env:BASE_URL = 'http://127.0.0.1:8001'
+..\.venv\Scripts\python.exe -m pytest integration_tests/alignment -n auto
 ```
 
-Optional flags:
-- `--max-tps` (default 20.0) — peak TPS to ramp to
-- `--hold-duration` (default 30.0) — seconds to hold at peak
-- `--ramp-step` (default 1.0) — TPS increment per step
-- `--ramp-interval` (default 2.0) — seconds between ramp steps
-- `--concurrency` (default 50) — max concurrent connections
-- `--global-tps` (default 0) — global TPS limit on proxy
-- `--per-provider-tps` — per-provider TPS limit
+Useful markers: `-m openai`, `-m anthropic`, `-m streaming`, `-m tools`, and `-m vision`. `MODEL` overrides both protocol defaults. Without it, the suite uses `gpt-4o-mini` for OpenAI tests and `claude-sonnet-4-6` for Anthropic tests. API-key headers are accepted but ignored because this is a local-only proxy.
 
-## Mock Server
+## Local Mock and Load Scenario
 
-The mock server (`load_test/mock_server.py`) is started automatically by `run_integration.py` on port 9001. Do not start it manually when running integration tests.
+`integration_tests/run_integration.py` starts `load_test/mock_server.py`, starts a proxy on port 8000, configures the mock provider, and runs `load_test/load_test.py`.
 
-## Unit Tests
-
-```bash
-python -m pytest tests/ -v
+```powershell
+.\.venv\Scripts\python.exe integration_tests/run_integration.py
 ```
 
-The test suite has one known flaky test (`test_embedding_route_with_provider`) that passes in isolation but can timeout when run alongside the full suite due to server startup timing. This is pre-existing and unrelated to code changes.
+Do not start another mock server on port 9001 for this command. The runner's `--mode embedding` checks already-running services rather than starting them.
+
+## Unit/API Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests -v
+```
+
+The test suite has one known flaky test (`test_embedding_route_with_provider`) that passes in isolation but can time out in the full suite because of server startup timing. This is pre-existing and unrelated to code changes.

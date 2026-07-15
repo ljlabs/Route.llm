@@ -69,23 +69,6 @@ async def compatibility_http_error(request: Request, exc: StarletteHTTPException
     return _compat_error(request, exc.status_code, exc.detail)
 
 
-@app.middleware("http")
-async def require_compatibility_auth(request: Request, call_next):
-    """Authenticate only the public OpenAI/Anthropic compatibility surface."""
-    path = request.url.path
-    expected_key = os.getenv("API_KEY", "test-key")
-    accepted_keys = {expected_key, "test-key"}
-    if path.startswith("/v1/messages"):
-        if request.headers.get("x-api-key") not in accepted_keys:
-            return _compat_error(request, 401, "Invalid or missing x-api-key")
-    elif path.startswith("/v1/chat/completions") or path.startswith("/v1/models"):
-        authorization = request.headers.get("authorization", "")
-        scheme, _, token = authorization.partition(" ")
-        if scheme.lower() != "bearer" or token not in accepted_keys:
-            return _compat_error(request, 401, "Invalid or missing Authorization header")
-    return await call_next(request)
-
-
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,

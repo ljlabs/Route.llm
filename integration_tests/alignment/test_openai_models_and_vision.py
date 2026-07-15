@@ -3,7 +3,7 @@ Conformance tests for GET /v1/models, GET /v1/models/{id}, and
 image (vision) content parts in chat completions.
 """
 import pytest
-from validators import validate_openai_models_list, validate_openai_chat_completion, validate_openai_error
+from .validators import validate_openai_models_list, validate_openai_chat_completion, validate_openai_error
 
 pytestmark = pytest.mark.openai
 

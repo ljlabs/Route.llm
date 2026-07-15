@@ -23,6 +23,8 @@ _stats = {
     "total_errors": 0,
     "embedding_requests": 0,
     "total_image_requests": 0,
+    "pdf_requests": 0,
+    "generic_file_requests": 0,
     "start_time": None,
 }
 
@@ -52,32 +54,85 @@ def generate_text(num_tokens: int) -> str:
     return " ".join(selected)
 
 
-def _has_image_content(messages: list) -> bool:
-    """Check if any message contains image content blocks."""
-    for msg in messages:
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict):
-                    if part.get("type") in ("image", "image_url"):
-                        return True
-    return False
+def _data_url_media_type(value: object) -> str | None:
+    """Return a MIME type from a base64 data URL, if present."""
+    if not isinstance(value, str) or not value.startswith("data:"):
+        return None
+    header, _, data = value.partition(",")
+    if not data or ";base64" not in header.lower():
+        return None
+    return header[5:].split(";", 1)[0] or "application/octet-stream"
 
 
-def _has_pdf_content(messages: list) -> bool:
-    """Check if any message contains PDF content blocks."""
-    for msg in messages:
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict):
-                    if part.get("type") == "document" and part.get("source", {}).get("media_type") == "application/pdf":
-                        return True
-                    if part.get("type") == "file" and part.get("mime_type") == "application/pdf":
-                        return True
-        elif isinstance(content, str) and "application/pdf" in content:
-            return True
-    return False
+def _media_type_from_part(part: dict) -> str | None:
+    """Recognize Anthropic and OpenAI base64 image/file content blocks."""
+    block_type = part.get("type")
+    if block_type in {"image", "document"}:
+        source = part.get("source") or {}
+        if source.get("type") == "base64" and source.get("data"):
+            return source.get("media_type") or "application/octet-stream"
+    if block_type in {"image_url", "input_image"}:
+        image_url = part.get("image_url")
+        if isinstance(image_url, dict):
+            image_url = image_url.get("url")
+        return _data_url_media_type(image_url)
+    if block_type in {"input_file", "file"}:
+        file_data = part.get("file_data") or part.get("file_url")
+        nested_file = part.get("file") if isinstance(part.get("file"), dict) else {}
+        file_data = file_data or nested_file.get("file_data") or nested_file.get("file_url")
+        if isinstance(file_data, str) and file_data:
+            return _data_url_media_type(file_data) or part.get("mime_type") or nested_file.get("mime_type") or "application/octet-stream"
+    return None
+
+
+def _classify_media(messages: list) -> list[str]:
+    """Return MIME types for all accepted base64 media blocks, including tool results."""
+    media_types = []
+
+    def inspect(content: object):
+        if not isinstance(content, list):
+            return
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "tool_result":
+                inspect(part.get("content"))
+                continue
+            media_type = _media_type_from_part(part)
+            if media_type:
+                media_types.append(media_type)
+
+    for message in messages:
+        if isinstance(message, dict):
+            inspect(message.get("content"))
+    return media_types
+
+
+def _record_media(media_types: list[str]) -> None:
+    """Track media requests without storing their potentially large base64 payloads."""
+    images = sum(media_type.startswith("image/") for media_type in media_types)
+    pdfs = media_types.count("application/pdf")
+    generic_files = len(media_types) - images - pdfs
+    if images:
+        _stats["total_image_requests"] += 1
+    if pdfs:
+        _stats["pdf_requests"] += 1
+    if generic_files:
+        _stats["generic_file_requests"] += 1
+
+
+def _media_acknowledgement(media_types: list[str]) -> str | None:
+    """Return a deterministic media response for protocol interoperability tests."""
+    if not media_types:
+        return None
+    images = sum(media_type.startswith("image/") for media_type in media_types)
+    pdfs = media_types.count("application/pdf")
+    generic_files = len(media_types) - images - pdfs
+    return (
+        "[mock-media] "
+        f"images={images} pdfs={pdfs} files={generic_files} "
+        f"mime_types={','.join(media_types)}"
+    )
 
 
 def _get_recipe_response() -> dict:
@@ -145,22 +200,14 @@ async def chat_completions(request: Request):
 
     model = body.get("model", "mock-model")
     max_tokens = body.get("max_tokens", response_tokens)
-
-    # Track image requests
-    messages = body.get("messages", [])
-    if _has_image_content(messages):
-        _stats["total_image_requests"] += 1
-
-    # Check for PDF content and return recipe response
-    if _has_pdf_content(messages):
-        _stats["total_image_requests"] += 1
-        return JSONResponse(content=_get_recipe_response())
+    media_types = _classify_media(body.get("messages", []))
+    _record_media(media_types)
 
     # Simulate LLM latency
     if response_latency_ms > 0:
         await asyncio.sleep(response_latency_ms / 1000.0)
 
-    text = generate_text(max_tokens)
+    text = _media_acknowledgement(media_types) or generate_text(max_tokens)
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     created = int(time.time())
 
@@ -189,6 +236,45 @@ async def chat_completions(request: Request):
     return JSONResponse(content=response)
 
 
+@app.post("/v1/responses")
+async def responses(request: Request):
+    """OpenAI Responses-style mock supporting input_image and input_file blocks."""
+    _stats["total_requests"] += 1
+
+    try:
+        body = await request.json()
+    except Exception:
+        _stats["total_errors"] += 1
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON"})
+
+    raw_input = body.get("input", [])
+    messages = raw_input if isinstance(raw_input, list) else []
+    media_types = _classify_media(messages)
+    _record_media(media_types)
+    if response_latency_ms > 0:
+        await asyncio.sleep(response_latency_ms / 1000.0)
+
+    model = body.get("model", "mock-model")
+    max_tokens = body.get("max_output_tokens", response_tokens)
+    text = _media_acknowledgement(media_types) or generate_text(max_tokens)
+    response_id = f"resp_{uuid.uuid4().hex[:12]}"
+    return JSONResponse(content={
+        "id": response_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "completed",
+        "model": model,
+        "output": [{
+            "type": "message",
+            "id": f"msg_{uuid.uuid4().hex[:12]}",
+            "status": "completed",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": text, "annotations": []}],
+        }],
+        "usage": {"input_tokens": 10, "output_tokens": max_tokens, "total_tokens": 10 + max_tokens},
+    })
+
+
 @app.post("/v1/messages")
 async def anthropic_messages(request: Request):
     """Anthropic-compatible messages endpoint (for testing Anthropic passthrough)."""
@@ -202,22 +288,14 @@ async def anthropic_messages(request: Request):
 
     model = body.get("model", "mock-model")
     max_tokens = body.get("max_tokens", response_tokens)
-
-    # Track image requests
-    messages = body.get("messages", [])
-    if _has_image_content(messages):
-        _stats["total_image_requests"] += 1
-
-    # Check for PDF content and return recipe response
-    if _has_pdf_content(messages):
-        _stats["total_image_requests"] += 1
-        return JSONResponse(content=_get_recipe_response())
+    media_types = _classify_media(body.get("messages", []))
+    _record_media(media_types)
 
     # Simulate LLM latency
     if response_latency_ms > 0:
         await asyncio.sleep(response_latency_ms / 1000.0)
 
-    text = generate_text(max_tokens)
+    text = _media_acknowledgement(media_types) or generate_text(max_tokens)
     msg_id = f"msg_{uuid.uuid4().hex[:12]}"
 
     response = {

@@ -16,7 +16,7 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 pip install -r requirements.txt
 
 # Run tests
-pytest test_proxy.py
+python -m pytest tests/test_proxy.py
 
 # Windows quick-start (auto-creates venv, installs deps, starts server)
 start_server.bat

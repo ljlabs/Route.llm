@@ -11,8 +11,8 @@ Anthropic's stream is an ordered event sequence:
   message_stop
 """
 import pytest
-from validators import validate_anthropic_sse_event
-from sse import iter_anthropic_sse
+from .validators import validate_anthropic_sse_event
+from .sse import iter_anthropic_sse
 
 pytestmark = [pytest.mark.anthropic, pytest.mark.streaming]
 

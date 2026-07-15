@@ -15,8 +15,10 @@ import sys
 import statistics
 from typing import List
 
-MOCK_SERVER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mock_server.py")
-LOAD_TEST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "load_test.py")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOAD_TEST_DIR = os.path.join(PROJECT_ROOT, "load_test")
+MOCK_SERVER_PATH = os.path.join(LOAD_TEST_DIR, "mock_server.py")
+LOAD_TEST_PATH = os.path.join(LOAD_TEST_DIR, "load_test.py")
 
 # Ports
 MOCK_PORT = 9001
@@ -29,6 +31,7 @@ async def start_process(command: List[str], name: str):
     print(f"Starting {name}...")
     proc = await asyncio.create_subprocess_exec(
         *command,
+        cwd=PROJECT_ROOT,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -119,7 +122,9 @@ async def run_chat(args):
             "--concurrency", str(args.concurrency),
         ]
 
-        load_proc = await asyncio.create_subprocess_exec(*load_cmd, stdout=None, stderr=None)
+        load_proc = await asyncio.create_subprocess_exec(
+            *load_cmd, cwd=PROJECT_ROOT, stdout=None, stderr=None
+        )
         await load_proc.wait()
 
     except Exception as e:

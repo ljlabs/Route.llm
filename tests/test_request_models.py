@@ -176,6 +176,7 @@ def test_anthropic_request_with_tools():
     """Test Anthropic request still validates correctly."""
     request_data = {
         "model": "claude-3-5-sonnet",
+        "max_tokens": 32,
         "messages": [
             {"role": "user", "content": "Execute ls"}
         ],
@@ -200,3 +201,25 @@ def test_anthropic_request_with_tools():
     assert len(request.tools) == 1
     assert request.tools[0].name == "bash"
     assert request.tools[0].input_schema["type"] == "object"
+
+
+def test_anthropic_inline_system_messages_are_normalized():
+    """Claude-style inline system messages become an ordered top-level prompt."""
+    request = AnthropicRequest(
+        model="claude-sonnet-4-6",
+        max_tokens=32,
+        system="Top-level instruction",
+        messages=[
+            {"role": "system", "content": "First inline instruction"},
+            {"role": "system", "content": [{"type": "text", "text": "Second inline instruction"}]},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hello"},
+        ],
+    )
+
+    assert request.system == [
+        {"type": "text", "text": "Top-level instruction"},
+        {"type": "text", "text": "First inline instruction"},
+        {"type": "text", "text": "Second inline instruction"},
+    ]
+    assert [message.role for message in request.messages] == ["user", "assistant"]

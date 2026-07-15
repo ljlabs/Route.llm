@@ -3,8 +3,8 @@ Conformance tests for OpenAI-style tool / function calling.
 """
 import json
 import pytest
-from validators import validate_openai_chat_completion
-from sse import iter_openai_sse
+from .validators import validate_openai_chat_completion
+from .sse import iter_openai_sse
 
 pytestmark = [pytest.mark.openai, pytest.mark.tools]
 

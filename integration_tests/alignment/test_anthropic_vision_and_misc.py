@@ -3,7 +3,7 @@ Conformance tests for Anthropic image content blocks and the
 /v1/messages/count_tokens endpoint.
 """
 import pytest
-from validators import validate_anthropic_message
+from .validators import validate_anthropic_message
 
 pytestmark = pytest.mark.anthropic
 

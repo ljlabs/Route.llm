@@ -82,6 +82,50 @@ async def list_models(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/v1/model/info")
+async def get_model_info():
+    """Expose LiteLLM-compatible metadata for every model advertised by the router.
+
+    OpenHands probes this endpoint when configured against a LiteLLM-compatible
+    gateway. Provider credentials and endpoint URLs are intentionally omitted.
+    """
+    try:
+        providers_by_id = {provider["id"]: provider for provider in db.get_providers()}
+        model_providers = {
+            mapping["model_id"]: providers_by_id.get(mapping["provider_id"])
+            for mapping in db.get_model_mappings()
+        }
+        active_provider = db.get_active_provider()
+        if active_provider:
+            model_providers.setdefault(active_provider["model_name"], active_provider)
+
+        default_max_tokens = db.get_max_tokens()
+        models = []
+        for model_name, provider in model_providers.items():
+            model_info = {
+                "id": model_name,
+                "db_model": False,
+                "key": model_name,
+                "mode": "chat",
+            }
+            if provider:
+                model_info["litellm_provider"] = provider["api_type"]
+                model_info["max_output_tokens"] = (
+                    provider["max_tokens"] or default_max_tokens
+                )
+
+            models.append({
+                "model_name": model_name,
+                "litellm_params": {"model": model_name},
+                "model_info": model_info,
+            })
+
+        return {"data": models}
+    except Exception as e:
+        logger.error(f"Error retrieving model info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/models")
 async def list_models_no_prefix(request: Request):
     """Model list endpoint without the /v1/ prefix."""

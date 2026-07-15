@@ -66,10 +66,29 @@ class AnthropicRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_message_sequence(self):
+        """Normalize Claude-style inline system messages before routing."""
+        inline_system = [message.content for message in self.messages if message.role == "system"]
+        self.messages = [message for message in self.messages if message.role != "system"]
+
+        if inline_system:
+            system_segments = [self.system, *inline_system]
+            if any(isinstance(segment, list) for segment in system_segments if segment is not None):
+                system_blocks = []
+                for segment in system_segments:
+                    if isinstance(segment, list):
+                        system_blocks.extend(segment)
+                    elif segment is not None:
+                        system_blocks.append({"type": "text", "text": str(segment)})
+                self.system = system_blocks
+            else:
+                self.system = "\n".join(str(segment) for segment in system_segments if segment is not None)
+
+        if not self.messages:
+            raise ValueError("Anthropic requests must include at least one user message")
         if self.messages[0].role != "user":
             raise ValueError("Anthropic conversations must begin with a user message")
         if any(message.role not in {"user", "assistant"} for message in self.messages):
-            raise ValueError("Anthropic messages only support user and assistant roles")
+            raise ValueError("Anthropic messages only support user and assistant roles after system normalization")
         return self
 
 

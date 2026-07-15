@@ -1077,6 +1077,40 @@ class OpenAIToAnthropicStreamTranslator(StreamTranslator):
                         
 
 
+            # An upstream may close after emitting a malformed chunk instead of
+            # a finish chunk. Once an Anthropic stream has started, always emit
+            # its required terminal events rather than leaving clients hanging.
+            if sent_start and not sent_stop:
+                if text_block_started:
+                    yield "event: content_block_stop\ndata: " + json.dumps({
+                        "type": "content_block_stop", "index": 0
+                    }) + "\n\n"
+
+                for t_data in tool_idx_map.values():
+                    yield "event: content_block_stop\ndata: " + json.dumps({
+                        "type": "content_block_stop", "index": t_data["anth_idx"]
+                    }) + "\n\n"
+                    try:
+                        parsed_args = json.loads(t_data["arguments_accum"])
+                    except Exception:
+                        parsed_args = t_data["arguments_accum"]
+                    accumulated_blocks.append({
+                        "type": "tool_use",
+                        "id": t_data["id"],
+                        "name": t_data["name"],
+                        "input": parsed_args,
+                    })
+
+                yield "event: message_delta\ndata: " + json.dumps({
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": "tool_use" if tool_idx_map else "end_turn",
+                        "stop_sequence": None,
+                    },
+                    "usage": {"output_tokens": 0},
+                }) + "\n\n"
+                yield "event: message_stop\ndata: {\"type\": \"message_stop\"}\n\n"
+
         except Exception as stream_err:
 
 

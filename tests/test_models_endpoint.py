@@ -115,6 +115,48 @@ class TestModelsEndpointProxy:
         assert isinstance(model["created"], int)
 
 
+class TestLiteLLMModelInfoEndpoint:
+    """Tests for the LiteLLM model discovery route used by OpenHands."""
+
+    def test_returns_active_provider_metadata_without_credentials(self):
+        client = TestClient(app)
+        db.add_provider(
+            "TestProvider",
+            "openai",
+            "http://test.com",
+            "sk-secret",
+            "gpt-4o",
+            is_active=1,
+            max_tokens=8192,
+        )
+
+        response = client.get("/v1/model/info")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "data": [{
+                "model_name": "gpt-4o",
+                "litellm_params": {"model": "gpt-4o"},
+                "model_info": {
+                    "id": "gpt-4o",
+                    "db_model": False,
+                    "key": "gpt-4o",
+                    "mode": "chat",
+                    "litellm_provider": "openai",
+                    "max_output_tokens": 8192,
+                },
+            }],
+        }
+
+    def test_returns_empty_data_when_no_models_are_configured(self):
+        client = TestClient(app)
+
+        response = client.get("/v1/model/info")
+
+        assert response.status_code == 200
+        assert response.json() == {"data": []}
+
+
 class TestAnthropicModelAliasFallback:
     """Tests for standard Anthropic aliases on the compatibility endpoint."""
 

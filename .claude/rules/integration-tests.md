@@ -1,30 +1,30 @@
-# Integration Tests
+# Test Suite Layout
 
-## Running Integration Tests
+- `tests/` contains fast unit, translation, database, and in-process API tests.
+- `integration_tests/` contains live router and multi-service integration tests.
+- `load_test/` contains only the mock backend, load generator, and generated reports.
 
-The integration test orchestrator is at `load_test/run_integration.py`. It handles everything — starts the mock server, starts the proxy server, configures them, and runs the load test.
+## Protocol Conformance
 
-```bash
-python load_test/run_integration.py
+Run the OpenAI and Anthropic alignment suite against an already-running router:
+
+```powershell
+$env:BASE_URL = 'http://127.0.0.1:8001'
+.\.venv\Scripts\python.exe -m pytest integration_tests/alignment -n auto
 ```
 
-Optional flags:
-- `--max-tps` (default 20.0) — peak TPS to ramp to
-- `--hold-duration` (default 30.0) — seconds to hold at peak
-- `--ramp-step` (default 1.0) — TPS increment per step
-- `--ramp-interval` (default 2.0) — seconds between ramp steps
-- `--concurrency` (default 50) — max concurrent connections
-- `--global-tps` (default 0) — global TPS limit on proxy
-- `--per-provider-tps` — per-provider TPS limit
+Useful markers: `openai`, `anthropic`, `streaming`, `tools`, and `vision`. API-key headers are accepted but ignored because the proxy is local-only.
 
-## Mock Server
+## Local Mock and Load Scenario
 
-The mock server (`load_test/mock_server.py`) is started automatically by `run_integration.py` on port 9001. Do not start it manually when running integration tests.
-
-## Unit Tests
-
-```bash
-python -m pytest tests/ -v
+```powershell
+.\.venv\Scripts\python.exe integration_tests/run_integration.py
 ```
 
-The test suite has one known flaky test (`test_embedding_route_with_provider`) that passes in isolation but can timeout when run alongside the full suite due to server startup timing. This is pre-existing and unrelated to code changes.
+The runner starts `load_test/mock_server.py` on port 9001, a proxy on port 8000, configures a mock provider, and invokes the load generator. Do not start a duplicate mock server for this command.
+
+## Unit/API Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests -v
+```

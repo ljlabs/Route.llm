@@ -442,7 +442,8 @@ if not (text_content or tool_calls or image_blocks):
 After implementing fixes, verify with:
 
 1. **Unit tests** — `python -m pytest tests/ -v`
-2. **Integration tests** — `python load_test/run_integration.py`
+2. **Protocol conformance** — `python -m pytest integration_tests/alignment -n auto`
+3. **Mock/load orchestration** — `python integration_tests/run_integration.py`
 3. **Manual testing scenarios:**
    - Multi-tool-call conversation (verifies fix #1)
    - Long streaming conversation (verifies fix #2)

@@ -63,24 +63,48 @@ export ANTHROPIC_BASE_URL="http://localhost:8000"
 claude
 ```
 
-#### How It Works Under the Hood:
-1. **Claude Code** dispatches Anthropic protocol `/v1/messages` requests to `http://localhost:8000/v1/messages`.
-2. **Route.LLM** intercepts the request and verifies the active provider format.
-3. If the active provider is an OpenAI-compatible server (e.g. OpenRouter):
-   - It converts the Anthropic tool schemas, messages, and parameters into OpenAI specifications.
-   - It fires the request to your configured `endpoint_url`.
-   - It intercepts the incoming stream delta tokens, wraps them into Anthropic-formatted stream events, and yields them to Claude Code.
+## Architecture
+
+Route.LLM is a FastAPI gateway with one public compatibility surface and pluggable upstream providers:
+
+```text
+OpenAI or Anthropic client
+          |
+          v
+api/ proxy routes -> core/router.py -> provider service/factory -> configured upstream
+          |                    |                 |
+          |                    |                 +-- OpenAI, Anthropic, Gemini, OpenRouter, NVIDIA, embeddings
+          |                    +-- request/response + SSE translation, rate limits, lifecycle logging
+          v
+static/ dashboard <----------- database.py (SQLite providers, mappings, settings, request events)
+```
+
+- `api/` exposes the OpenAI Chat Completions, Anthropic Messages, models, provider, settings, logs, metrics, and embeddings routes.
+- `core/` owns model routing, provider adapters, request/response translation, streaming SSE translation, and rate limiting.
+- `models/` validates public request payloads; `infrastructure/` configures shared HTTP clients.
+- `database.py` persists provider configuration, model mappings, settings, request logs, and lifecycle events.
+- `static/` is the local dashboard; `load_test/mock_server.py` is a deterministic backend for local validation.
+
+For example, Claude Code sends `/v1/messages` to the proxy. The router selects a mapped or active provider, translates the payload when formats differ, calls the upstream endpoint, then translates the response and SSE events back to Anthropic format.
+
+See [the public API compatibility contract](documentation/API_COMPATIBILITY.md) for the supported OpenAI and Anthropic surface, provider-dependent capabilities, and intentional non-goals.
 
 ---
 
-## Unit Testing
+## Testing
 
-Run one-off unit tests covering request translations, tool conversions, and SQLite database retention limits using `pytest`:
+The repository separates fast checks, live protocol checks, and performance tooling:
 
-```bash
-# Activate env and run pytest
-.venv/Scripts/pytest test_proxy.py
-```
+| Area | Purpose | Command from repository root |
+| --- | --- | --- |
+| `tests/` | Unit, translation, database, and in-process API tests | `.venv\\Scripts\\python.exe -m pytest tests -v` |
+| `integration_tests/alignment/` | Live OpenAI and Anthropic protocol-conformance tests | `.venv\\Scripts\\python.exe -m pytest integration_tests/alignment -n auto` |
+| `integration_tests/` | Multi-service orchestration and Windows cleanup utility | `.venv\\Scripts\\python.exe integration_tests/run_integration.py` |
+| `load_test/` | Mock backend, load generator, and ignored HTML reports | `.venv\\Scripts\\python.exe load_test/load_test.py --help` |
+
+The alignment suite targets an existing router. Set `BASE_URL` (for example, `http://127.0.0.1:8001`) before running it. The integration runner starts its own mock backend on port 9001 and proxy on port 8000; do not start a duplicate mock for that command.
+
+See `integration_tests/README.md` and `load_test/README.md` for suite-specific setup and options.
 
 ---
 
