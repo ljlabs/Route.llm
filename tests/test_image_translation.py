@@ -3,6 +3,7 @@ from core.providers.translation import (
     _openai_image_url_to_anthropic,
     _anthropic_image_to_openai,
     openai_to_anthropic_request,
+    anthropic_to_openai_request,
     anthropic_to_openai_response,
     openai_to_anthropic_response
 )
@@ -82,10 +83,10 @@ class TestOpenAIImageURLToAnthropic:
         assert result["source"]["data"] == "some-other-format"
     
     def test_input_image_type(self):
-        """input_image type (Responses API) should be handled the same way."""
+        """Responses input_image blocks use a string image_url."""
         openai_part = {
             "type": "input_image",
-            "image_url": {"url": "https://example.com/image.png"}
+            "image_url": "https://example.com/image.png"
         }
         result = _openai_image_url_to_anthropic(openai_part)
         assert result["type"] == "image"
@@ -192,6 +193,39 @@ class TestOpenAIToAnthropicRequest:
                         assert tool_content[1]["source"]["type"] == "url"
                         return
         pytest.fail("Tool result with image not found")
+
+
+class TestAnthropicToOpenAIRequest:
+    """Tests for Anthropic → OpenAI request translation with images."""
+
+    def test_url_image_and_interleaved_text_preserve_order(self):
+        anthropic_request = {
+            "model": "claude-sonnet-4-6",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Image 1:"},
+                    {"type": "image", "source": {
+                        "type": "url", "url": "https://example.com/one.jpg"
+                    }},
+                    {"type": "text", "text": "Image 2:"},
+                    {"type": "image", "source": {
+                        "type": "base64", "media_type": "image/png", "data": "abc123"
+                    }},
+                    {"type": "text", "text": "Compare them."}
+                ]
+            }]
+        }
+
+        result = anthropic_to_openai_request(anthropic_request, "gpt-4o")
+        content = result["messages"][0]["content"]
+
+        assert [part["type"] for part in content] == [
+            "text", "image_url", "text", "image_url", "text"
+        ]
+        assert content[1]["image_url"]["url"] == "https://example.com/one.jpg"
+        assert content[3]["image_url"]["url"] == "data:image/png;base64,abc123"
+        assert content[4]["text"] == "Compare them."
 
 
 class TestAnthropicToOpenAIResponse:
